@@ -13,5 +13,39 @@
       "Error: Delta Lake (deltalake) and its dependencies are required for non-Spark operations. Install 'hops-deltalake' to enable Delta RS features.",
       "Finished with status=failed in 51.76s"
     ]
+  },
+  {
+    "id": "run-b4aae695",
+    "name": "Historical Data Backfill (Karachi, 90d)",
+    "type": "backfill",
+    "status": "success",
+    "startTime": "2026-08-02T12:45:49.624154+00:00",
+    "durationSeconds": 36.06,
+    "recordsProcessed": 2064,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: Historical Data Backfill (Karachi, 90d)",
+      "Fetched 2088 raw hourly records from OpenWeather history API",
+      "Wrote 2064 feature rows to feature store",
+      "Finished with status=success in 36.06s"
+    ]
+  },
+  {
+    "id": "run-8304894f",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "success",
+    "startTime": "2026-08-02T12:46:42.209081+00:00",
+    "durationSeconds": 95.56,
+    "recordsProcessed": 2064,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: Daily Automated Model Training Job",
+      "Trained on 2064 feature rows",
+      "24h: best=lstm rmse=7.429",
+      "48h: best=lstm rmse=8.194",
+      "72h: best=lstm rmse=9.185",
+      "Finished with status=success in 95.56s"
+    ]
   }
 ]
