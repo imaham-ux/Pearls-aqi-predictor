@@ -1,0 +1,17 @@
+[
+  {
+    "id": "run-5f9ed1cc",
+    "name": "Historical Data Backfill (Karachi, 90d)",
+    "type": "backfill",
+    "status": "failed",
+    "startTime": "2026-08-02T11:35:57.325557+00:00",
+    "durationSeconds": 51.76,
+    "recordsProcessed": 0,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: Historical Data Backfill (Karachi, 90d)",
+      "Error: Delta Lake (deltalake) and its dependencies are required for non-Spark operations. Install 'hops-deltalake' to enable Delta RS features.",
+      "Finished with status=failed in 51.76s"
+    ]
+  }
+]

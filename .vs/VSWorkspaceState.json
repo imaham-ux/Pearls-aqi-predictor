@@ -1,0 +1,12 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\assets",
+    "\\python-backend",
+    "\\python-backend\\data",
+    "\\python-backend\\models",
+    "\\python-backend\\src"
+  ],
+  "SelectedNode": "\\python-backend\\.env.example",
+  "PreviewInSolutionExplorer": false
+}

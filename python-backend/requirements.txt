@@ -1,0 +1,14 @@
+requests==2.31.0
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.0
+tensorflow==2.16.1
+hopsworks==4.8.4
+joblib==1.4.2
+shap==0.45.1
+flask==3.0.3
+flask-cors==4.0.1
+python-dotenv==1.0.1
+matplotlib==3.9.0
+pyarrow==16.1.0
+schedule==1.2.2

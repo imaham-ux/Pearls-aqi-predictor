@@ -1,0 +1,36 @@
+name: Manual Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days of historical data to backfill"
+        required: false
+        default: "90"
+
+jobs:
+  run-backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backfill
+        env:
+          AQICN_TOKEN: ${{ secrets.AQICN_TOKEN }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          CITY_NAME: ${{ vars.CITY_NAME }}
+          LATITUDE: ${{ vars.LATITUDE }}
+          LONGITUDE: ${{ vars.LONGITUDE }}
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT_NAME: ${{ vars.HOPSWORKS_PROJECT_NAME }}
+        run: python -m src.backfill --days ${{ github.event.inputs.days }}

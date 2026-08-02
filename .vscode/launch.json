@@ -1,0 +1,64 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "1) Flask API (Python backend)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/python-backend/app/flask_api.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/python-backend",
+            "envFile": "${workspaceFolder}/python-backend/.env"
+        },
+        {
+            "name": "2) React + Node Frontend (npm run dev)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "npm run dev",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Backfill (90 days)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.backfill",
+            "args": ["--days", "90"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/python-backend",
+            "envFile": "${workspaceFolder}/python-backend/.env"
+        },
+        {
+            "name": "Train Pipeline",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.train_pipeline",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/python-backend",
+            "envFile": "${workspaceFolder}/python-backend/.env"
+        },
+        {
+            "name": "Feature Pipeline (hourly job)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.feature_pipeline",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/python-backend",
+            "envFile": "${workspaceFolder}/python-backend/.env"
+        },
+        {
+            "name": "Smoke Test (Flask API, offline mocked)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/python-backend/tests/test_flask_api.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/python-backend"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "▶ Run Everything (Flask + React)",
+            "configurations": ["1) Flask API (Python backend)", "2) React + Node Frontend (npm run dev)"],
+            "stopAll": true
+        }
+    ]
+}

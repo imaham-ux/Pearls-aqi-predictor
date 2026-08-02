@@ -1,0 +1,10 @@
+{
+    "python.analysis.extraPaths": ["${workspaceFolder}/python-backend"],
+    "python.envFile": "${workspaceFolder}/python-backend/.env",
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/node_modules": true
+    },
+    "typescript.tsdk": "node_modules/typescript/lib"
+}
