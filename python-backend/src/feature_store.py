@@ -30,13 +30,17 @@ LOCAL_PARQUET_PATH = config.DATA_DIR / "aqi_features.parquet"
 
 def _with_retries(func, *args, retries=4, base_delay=5, label="Hopsworks call", **kwargs):
     """Run `func(*args, **kwargs)`, retrying on any exception with exponential backoff.
-    Re-raises the last exception if all attempts fail."""
+    Re-raises the last exception if all attempts fail. Schema-compatibility errors are
+    deterministic (retrying won't fix them), so those fail fast after a single attempt."""
     last_exc = None
     for attempt in range(1, retries + 1):
         try:
             return func(*args, **kwargs)
         except Exception as e:  # noqa: BLE001
             last_exc = e
+            if "not compatible with Feature Group schema" in str(e):
+                logger.error("%s failed due to a schema mismatch (not retrying, won't fix itself): %s", label, e)
+                raise
             if attempt < retries:
                 delay = base_delay * attempt
                 logger.warning(
@@ -47,6 +51,18 @@ def _with_retries(func, *args, retries=4, base_delay=5, label="Hopsworks call", 
             else:
                 logger.error("%s failed after %d attempts: %s", label, retries, e)
     raise last_exc
+
+
+def _coerce_dtypes_for_hopsworks(df: pd.DataFrame) -> pd.DataFrame:
+    """Hopsworks feature groups commonly expect 32-bit 'int' for small integer
+    columns (hour, day, month, weekday, is_weekend, low_wind_flag, etc.), but
+    pandas' default integer dtype is int64 ('bigint'). This mismatch causes
+    'Features are not compatible with Feature Group schema' errors on insert.
+    Downcast any int64 column to int32 so it matches what Hopsworks expects."""
+    df = df.copy()
+    for col in df.select_dtypes(include=["int64"]).columns:
+        df[col] = df[col].astype("int32")
+    return df
 
 
 class LocalFeatureStore:
@@ -122,6 +138,7 @@ class HopsworksFeatureStore:
         # feature group stays empty forever (which is exactly what caused
         # training to fail with "No delta logs found ... no data has been
         # written yet"). So: retry hard, and if it still fails, raise loudly.
+        df = _coerce_dtypes_for_hopsworks(df)
         _with_retries(
             self.fg.insert, df, write_options={"wait_for_job": True},
             label=f"insert {len(df)} rows into '{config.FEATURE_GROUP_NAME}'",
