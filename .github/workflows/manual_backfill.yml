@@ -36,7 +36,7 @@ jobs:
           AQICN_TOKEN: ${{ secrets.AQICN_TOKEN }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
           HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
-          HOPSWORKS_PROJECT_NAME: ${{ secrets.HOPSWORKS_PROJECT_NAME }}
+          HOPSWORKS_PROJECT_NAME: ${{ vars.HOPSWORKS_PROJECT_NAME }}
           CITY_NAME: ${{ vars.CITY_NAME }}
           LATITUDE: ${{ vars.LATITUDE }}
           LONGITUDE: ${{ vars.LONGITUDE }}

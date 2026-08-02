@@ -36,7 +36,7 @@ jobs:
           LATITUDE: ${{ vars.LATITUDE }}
           LONGITUDE: ${{ vars.LONGITUDE }}
           HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
-          HOPSWORKS_PROJECT_NAME: ${{ secrets.HOPSWORKS_PROJECT_NAME }}
+          HOPSWORKS_PROJECT_NAME: ${{ vars.HOPSWORKS_PROJECT_NAME }}
         run: |
           python -m src.feature_pipeline
 
