@@ -9,7 +9,14 @@ Fallback backend: local parquet file under ./data  -- used automatically when
 
 This mirrors exactly what Hopsworks' `feature_group.insert()` / `.read()` do,
 so switching from local -> real Hopsworks later requires editing config.py only.
+
+NOTE: Hopsworks reads/writes go over Arrow Flight (the "Feature Query Service"),
+which can occasionally hit transient network blips ("Socket closed",
+FlightUnavailableError) especially from ephemeral CI runners like GitHub Actions.
+All network calls below are wrapped with retry + exponential backoff so a single
+transient blip doesn't fail the whole pipeline run.
 """
+import time
 import logging
 import pandas as pd
 
@@ -19,6 +26,27 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("feature_store")
 
 LOCAL_PARQUET_PATH = config.DATA_DIR / "aqi_features.parquet"
+
+
+def _with_retries(func, *args, retries=4, base_delay=5, label="Hopsworks call", **kwargs):
+    """Run `func(*args, **kwargs)`, retrying on any exception with exponential backoff.
+    Re-raises the last exception if all attempts fail."""
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            last_exc = e
+            if attempt < retries:
+                delay = base_delay * attempt
+                logger.warning(
+                    "%s failed (attempt %d/%d): %s. Retrying in %ds...",
+                    label, attempt, retries, e, delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.error("%s failed after %d attempts: %s", label, retries, e)
+    raise last_exc
 
 
 class LocalFeatureStore:
@@ -53,19 +81,23 @@ class HopsworksFeatureStore:
         import hopsworks  # imported lazily so local mode never requires the package to succeed at import time
 
         logger.info("Connecting to Hopsworks project '%s'...", config.HOPSWORKS_PROJECT_NAME)
-        self.project = hopsworks.login(
+        self.project = _with_retries(
+            hopsworks.login,
             api_key_value=config.HOPSWORKS_API_KEY,
             project=config.HOPSWORKS_PROJECT_NAME,
+            label="Hopsworks login",
         )
         self.fs = self.project.get_feature_store()
 
         try:
-            self.fg = self.fs.get_or_create_feature_group(
+            self.fg = _with_retries(
+                self.fs.get_or_create_feature_group,
                 name=config.FEATURE_GROUP_NAME,
                 version=config.FEATURE_GROUP_VERSION,
                 description="Hourly AQI + weather features for AQI forecasting",
                 primary_key=["datetime"],
                 event_time="datetime",
+                label=f"get_or_create_feature_group('{config.FEATURE_GROUP_NAME}')",
             )
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(
@@ -83,16 +115,28 @@ class HopsworksFeatureStore:
             )
 
     def insert(self, df: pd.DataFrame):
-        self.fg.insert(df, write_options={"wait_for_job": True})
-        logger.info("Inserted %d rows -> Hopsworks feature group '%s'", len(df), config.FEATURE_GROUP_NAME)
+        try:
+            _with_retries(
+                self.fg.insert, df, write_options={"wait_for_job": True},
+                label=f"insert {len(df)} rows into '{config.FEATURE_GROUP_NAME}'",
+            )
+            logger.info("Inserted %d rows -> Hopsworks feature group '%s'", len(df), config.FEATURE_GROUP_NAME)
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "Could not insert into Hopsworks feature group '%s' after retries (%s). "
+                "Falling back to local parquet store for this run so the pipeline doesn't crash.",
+                config.FEATURE_GROUP_NAME, e,
+            )
+            LocalFeatureStore().insert(df)
         return df
 
     def read(self) -> pd.DataFrame:
         try:
-            return self.fg.read()
+            return _with_retries(self.fg.read, label=f"read '{config.FEATURE_GROUP_NAME}'")
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "Could not read feature group '%s' (likely still empty - no data inserted yet): %s",
+                "Could not read feature group '%s' after retries (likely a transient Hopsworks "
+                "Arrow Flight / network issue, or the group is still empty): %s",
                 config.FEATURE_GROUP_NAME, e,
             )
             return pd.DataFrame()
