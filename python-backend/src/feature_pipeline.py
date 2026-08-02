@@ -68,6 +68,26 @@ def run(triggered_by: str = "scheduler"):
         # only the freshest row needs to be (re)inserted with completed lag/rolling features
         latest_row = featurized.tail(1)
 
+        if not history.empty:
+            # IMPORTANT: the Hopsworks feature group's schema was locked in by the
+            # very first backfill insert, which (due to OpenWeather's free tier not
+            # offering bulk historical weather) never included live-weather columns
+            # like temp/humidity/pressure/wind_speed/clouds (or the heat_humidity_index/
+            # low_wind_flag derived from them). If this hourly row includes those
+            # extra columns, Hopsworks rejects the insert with a schema-mismatch
+            # error. So: only send columns that already exist in the established
+            # schema (i.e. in `history`), keeping this hourly job self-contained -
+            # it never needs backfill.py or train_pipeline.py to change.
+            existing_cols = [c for c in history.columns if c in latest_row.columns]
+            dropped_cols = [c for c in latest_row.columns if c not in history.columns]
+            if dropped_cols:
+                logger.info(
+                    "Dropping columns not present in the existing feature group schema "
+                    "(collected for potential future use, but not yet part of the trained "
+                    "schema): %s", dropped_cols,
+                )
+            latest_row = latest_row[existing_cols]
+
         store.insert(latest_row)
         logger.info("Feature pipeline run complete. Latest AQI=%s at %s",
                     new_row["aqi"], new_row["datetime"])
