@@ -9,7 +9,14 @@ import pandas as pd
 
 def add_time_features(df: pd.DataFrame, ts_col: str = "datetime") -> pd.DataFrame:
     df = df.copy()
-    df[ts_col] = pd.to_datetime(df[ts_col])
+    # utc=True normalizes a mix of tz-naive and tz-aware timestamps into one
+    # consistent UTC-aware series. This matters for the hourly feature pipeline:
+    # historical rows read back from Hopsworks often come back tz-naive, while
+    # the freshly-fetched live row is tz-aware (datetime.now(timezone.utc)) -
+    # concatenating the two without utc=True raises
+    # "Tz-aware datetime.datetime cannot be converted to datetime64 unless utc=True".
+    # Backfill data is already tz-aware UTC, so this is a no-op there.
+    df[ts_col] = pd.to_datetime(df[ts_col], utc=True)
     df["hour"] = df[ts_col].dt.hour
     df["day"] = df[ts_col].dt.day
     df["month"] = df[ts_col].dt.month
