@@ -115,19 +115,18 @@ class HopsworksFeatureStore:
             )
 
     def insert(self, df: pd.DataFrame):
-        try:
-            _with_retries(
-                self.fg.insert, df, write_options={"wait_for_job": True},
-                label=f"insert {len(df)} rows into '{config.FEATURE_GROUP_NAME}'",
-            )
-            logger.info("Inserted %d rows -> Hopsworks feature group '%s'", len(df), config.FEATURE_GROUP_NAME)
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "Could not insert into Hopsworks feature group '%s' after retries (%s). "
-                "Falling back to local parquet store for this run so the pipeline doesn't crash.",
-                config.FEATURE_GROUP_NAME, e,
-            )
-            LocalFeatureStore().insert(df)
+        # IMPORTANT: do NOT silently fall back to local storage here. If Hopsworks
+        # is configured, this data MUST land in the real feature group - falling
+        # back to a local file on a GitHub Actions runner would just get deleted
+        # when the runner shuts down, giving a false "success" while the real
+        # feature group stays empty forever (which is exactly what caused
+        # training to fail with "No delta logs found ... no data has been
+        # written yet"). So: retry hard, and if it still fails, raise loudly.
+        _with_retries(
+            self.fg.insert, df, write_options={"wait_for_job": True},
+            label=f"insert {len(df)} rows into '{config.FEATURE_GROUP_NAME}'",
+        )
+        logger.info("Inserted %d rows -> Hopsworks feature group '%s'", len(df), config.FEATURE_GROUP_NAME)
         return df
 
     def read(self) -> pd.DataFrame:
