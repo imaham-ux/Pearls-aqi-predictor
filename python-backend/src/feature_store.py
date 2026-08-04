@@ -135,6 +135,12 @@ class HopsworksFeatureStore:
                 f"so the feature group is created and populated with its first rows."
             )
 
+        # A feature group that was JUST created (or just had its version bumped)
+        # may need a brief moment for its underlying Delta table storage to be
+        # fully provisioned before it can handle a heavy write - give it a
+        # small head start rather than immediately hammering it with a big insert.
+        time.sleep(5)
+
     def insert(self, df: pd.DataFrame):
         # IMPORTANT: do NOT silently fall back to local storage here. If Hopsworks
         # is configured, this data MUST land in the real feature group - falling
@@ -142,32 +148,56 @@ class HopsworksFeatureStore:
         # when the runner shuts down, giving a false "success" while the real
         # feature group stays empty forever. So: retry hard, and if it still
         # fails, raise loudly.
-        #
-        # Inserts get EXTRA patience (more attempts, longer waits) compared to
-        # other Hopsworks calls: right after a large bulk backfill, Hopsworks'
-        # storage layer can still be compacting/settling the Delta table for a
-        # couple of minutes, which shows up as transient
-        # "Generic HdfsObjectStore error: ... Failed to read N bytes ..." errors
-        # that clear up on their own if you wait long enough.
         df = _coerce_dtypes_for_hopsworks(df)
-        _with_retries(
-            self.fg.insert, df, write_options={"wait_for_job": True},
-            retries=6, base_delay=15,  # 15s, 30s, 45s, 60s, 75s waits (~3.75 min total)
-            label=f"insert {len(df)} rows into '{config.FEATURE_GROUP_NAME}'",
-        )
-        logger.info("Inserted %d rows -> Hopsworks feature group '%s'", len(df), config.FEATURE_GROUP_NAME)
+
+        # Large single commits (e.g. a 730-day backfill = ~17k rows in one insert,
+        # especially right after the feature group is first created) appear to
+        # strain Hopsworks' storage backend and fail even on the very first read
+        # of the (practically empty) Delta table. Splitting into smaller chunks
+        # makes each individual commit far less likely to hit that failure mode,
+        # and any earlier chunks that DID succeed aren't lost if a later one fails.
+        CHUNK_SIZE = 2000
+        if len(df) > CHUNK_SIZE:
+            chunks = [df.iloc[i:i + CHUNK_SIZE] for i in range(0, len(df), CHUNK_SIZE)]
+            logger.info(
+                "Inserting %d rows in %d chunks of up to %d rows each "
+                "(large single commits can strain Hopsworks' storage backend)...",
+                len(df), len(chunks), CHUNK_SIZE,
+            )
+            for idx, chunk in enumerate(chunks, start=1):
+                logger.info("Inserting chunk %d/%d (%d rows)...", idx, len(chunks), len(chunk))
+                _with_retries(
+                    self.fg.insert, chunk, write_options={"wait_for_job": True},
+                    retries=6, base_delay=15,  # ~3.75 min patience per chunk
+                    label=f"insert chunk {idx}/{len(chunks)} ({len(chunk)} rows) into '{config.FEATURE_GROUP_NAME}'",
+                )
+            logger.info("Inserted all %d rows -> Hopsworks feature group '%s' (%d chunks)",
+                        len(df), config.FEATURE_GROUP_NAME, len(chunks))
+        else:
+            _with_retries(
+                self.fg.insert, df, write_options={"wait_for_job": True},
+                retries=6, base_delay=15,  # 15s, 30s, 45s, 60s, 75s waits (~3.75 min total)
+                label=f"insert {len(df)} rows into '{config.FEATURE_GROUP_NAME}'",
+            )
+            logger.info("Inserted %d rows -> Hopsworks feature group '%s'", len(df), config.FEATURE_GROUP_NAME)
         return df
 
     def read(self) -> pd.DataFrame:
+        # Extra patience here too: the DAILY TRAINING pipeline depends entirely
+        # on this read succeeding (it needs the full historical dataset), so
+        # it's worth waiting several minutes for a transient Hopsworks storage
+        # blip to clear rather than failing the whole day's training run.
         try:
             return _with_retries(
-                self.fg.read, retries=5, base_delay=10,
+                self.fg.read, retries=6, base_delay=20,  # 20s,40s,60s,80s,100s (~5 min total)
                 label=f"read '{config.FEATURE_GROUP_NAME}'",
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Could not read feature group '%s' after retries (likely a transient Hopsworks "
-                "Arrow Flight / storage-layer issue, or the group is still empty): %s",
+            logger.error(
+                "Could not read feature group '%s' after extended retries - this was a REAL "
+                "read failure (likely a Hopsworks storage/Arrow-Flight issue), not just an "
+                "empty feature group. Downstream code may misreport this as 'not enough data'; "
+                "check this log line if that happens. Original error: %s",
                 config.FEATURE_GROUP_NAME, e,
             )
             return pd.DataFrame()
