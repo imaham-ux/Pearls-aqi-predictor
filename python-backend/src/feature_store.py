@@ -10,11 +10,16 @@ Fallback backend: local parquet file under ./data  -- used automatically when
 This mirrors exactly what Hopsworks' `feature_group.insert()` / `.read()` do,
 so switching from local -> real Hopsworks later requires editing config.py only.
 
-NOTE: Hopsworks reads/writes go over Arrow Flight (the "Feature Query Service"),
-which can occasionally hit transient network blips ("Socket closed",
-FlightUnavailableError) especially from ephemeral CI runners like GitHub Actions.
-All network calls below are wrapped with retry + exponential backoff so a single
-transient blip doesn't fail the whole pipeline run.
+NOTE: Hopsworks reads/writes go over Arrow Flight (the "Feature Query Service")
+and an internal Delta Lake / HDFS-compatible object store, both of which can
+occasionally hit transient issues - network blips ("Socket closed",
+FlightUnavailableError), or storage-layer contention (e.g. right after a large
+bulk backfill, while Hopsworks is still compacting/settling that Delta table,
+you can see "Generic HdfsObjectStore error: ... Failed to read N bytes ...").
+All network calls below are wrapped with retry + exponential backoff so a
+transient blip doesn't fail the whole pipeline run. Inserts get extra-patient
+retries (longer waits, more attempts) since storage-layer settling after a
+bulk backfill can take a couple of minutes to clear.
 """
 import time
 import logging
@@ -125,7 +130,7 @@ class HopsworksFeatureStore:
             raise RuntimeError(
                 f"Hopsworks returned no Feature Group object for '{config.FEATURE_GROUP_NAME}'. "
                 f"This usually means the feature group has never been created with real data yet. "
-                f"Fix: run `python -m src.backfill --days 90` (or trigger the 'Manual Backfill' "
+                f"Fix: run `python -m src.backfill --days 730` (or trigger the 'Manual Backfill' "
                 f"GitHub Actions workflow) at least once BEFORE running the hourly feature pipeline, "
                 f"so the feature group is created and populated with its first rows."
             )
@@ -135,12 +140,19 @@ class HopsworksFeatureStore:
         # is configured, this data MUST land in the real feature group - falling
         # back to a local file on a GitHub Actions runner would just get deleted
         # when the runner shuts down, giving a false "success" while the real
-        # feature group stays empty forever (which is exactly what caused
-        # training to fail with "No delta logs found ... no data has been
-        # written yet"). So: retry hard, and if it still fails, raise loudly.
+        # feature group stays empty forever. So: retry hard, and if it still
+        # fails, raise loudly.
+        #
+        # Inserts get EXTRA patience (more attempts, longer waits) compared to
+        # other Hopsworks calls: right after a large bulk backfill, Hopsworks'
+        # storage layer can still be compacting/settling the Delta table for a
+        # couple of minutes, which shows up as transient
+        # "Generic HdfsObjectStore error: ... Failed to read N bytes ..." errors
+        # that clear up on their own if you wait long enough.
         df = _coerce_dtypes_for_hopsworks(df)
         _with_retries(
             self.fg.insert, df, write_options={"wait_for_job": True},
+            retries=6, base_delay=15,  # 15s, 30s, 45s, 60s, 75s waits (~3.75 min total)
             label=f"insert {len(df)} rows into '{config.FEATURE_GROUP_NAME}'",
         )
         logger.info("Inserted %d rows -> Hopsworks feature group '%s'", len(df), config.FEATURE_GROUP_NAME)
@@ -148,11 +160,14 @@ class HopsworksFeatureStore:
 
     def read(self) -> pd.DataFrame:
         try:
-            return _with_retries(self.fg.read, label=f"read '{config.FEATURE_GROUP_NAME}'")
+            return _with_retries(
+                self.fg.read, retries=5, base_delay=10,
+                label=f"read '{config.FEATURE_GROUP_NAME}'",
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Could not read feature group '%s' after retries (likely a transient Hopsworks "
-                "Arrow Flight / network issue, or the group is still empty): %s",
+                "Arrow Flight / storage-layer issue, or the group is still empty): %s",
                 config.FEATURE_GROUP_NAME, e,
             )
             return pd.DataFrame()
