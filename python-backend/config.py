@@ -29,7 +29,13 @@ HOPSWORKS_PROJECT_NAME = os.getenv("HOPSWORKS_PROJECT_NAME", "")
 USE_HOPSWORKS = bool(HOPSWORKS_API_KEY and HOPSWORKS_PROJECT_NAME)
 
 FEATURE_GROUP_NAME = "aqi_features"
-FEATURE_GROUP_VERSION = 1
+# v3: v2 got stuck in a broken storage state after repeated failed insert
+# attempts (HdfsObjectStore "Failed to read ... result value -1" even on a
+# fresh, small 2000-row chunk - not a size/network issue, the v2 group's
+# underlying Delta table location itself never initialized correctly).
+# Bumping to a clean version number gives us a fresh, never-touched feature
+# group instead of continuing to fight a corrupted one.
+FEATURE_GROUP_VERSION = 3
 FEATURE_VIEW_NAME = "aqi_feature_view"
 
 # ---- Alerts ----
