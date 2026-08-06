@@ -37,20 +37,49 @@ def fetch_historical_range(days: int) -> pd.DataFrame:
 
     all_pollution, all_weather = [], []
     # chunk by 90 days per request to keep each response a reasonable size
-    chunk_days = 90
+    chunk_days = 14
     cursor = start
-    while cursor < end:
-        chunk_end = min(cursor + timedelta(days=chunk_days), end)
-        start_str, end_str = cursor.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")
-        logger.info("Fetching Open-Meteo air quality + weather %s -> %s", start_str, end_str)
 
-        all_pollution.extend(api_client.get_open_meteo_air_quality_history(
-            config.LATITUDE, config.LONGITUDE, start_str, end_str))
-        all_weather.extend(api_client.get_open_meteo_weather_history(
-            config.LATITUDE, config.LONGITUDE, start_str, end_str))
+while cursor < end:
+    chunk_end = min(cursor + timedelta(days=chunk_days), end)
 
-        cursor = chunk_end
-        time.sleep(0.5)  # polite pacing between requests
+    start_str = cursor.strftime("%Y-%m-%d")
+    end_str = chunk_end.strftime("%Y-%m-%d")
+
+    logger.info(
+        "Fetching Open-Meteo air quality + weather %s -> %s",
+        start_str,
+        end_str,
+    )
+
+    try:
+        pollution = api_client.get_open_meteo_air_quality_history(
+            config.LATITUDE,
+            config.LONGITUDE,
+            start_str,
+            end_str,
+        )
+
+        weather = api_client.get_open_meteo_weather_history(
+            config.LATITUDE,
+            config.LONGITUDE,
+            start_str,
+            end_str,
+        )
+
+        all_pollution.extend(pollution)
+        all_weather.extend(weather)
+
+    except Exception as e:
+        logger.warning(
+            "Skipping chunk %s -> %s because of %s",
+            start_str,
+            end_str,
+            e,
+        )
+
+    cursor = chunk_end
+    time.sleep(1)
 
     df_pollution = pd.DataFrame(all_pollution)
     df_weather = pd.DataFrame(all_weather)
