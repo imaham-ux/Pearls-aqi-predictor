@@ -32,27 +32,29 @@ def explain_model(horizon: str = "24h", n_background: int = 200):
     X = df[feature_cols].values
     X_in = scaler.transform(X) if scaler is not None else X
 
-    background = X_in[np.random.choice(X_in.shape[0], min(n_background, X_in.shape[0]), replace=False)]
+    # Only explain a manageable number of rows for performance.
+    X_in = X_in[-100:]
 
     if framework == "sklearn":
         model = joblib.load(model_dir / "model.joblib")
-        if hasattr(model, "estimators_"):  # tree-based -> fast exact explainer
-            explainer = shap.TreeExplainer(model)
-            shap_values = explainer.shap_values(X_in)
-        else:  # linear model
-            explainer = shap.LinearExplainer(model, background)
-            shap_values = explainer.shap_values(X_in)
+        background = shap.sample(X_in, min(n_background, X_in.shape[0]))
+        explainer = shap.Explainer(model, background, feature_names=feature_cols)
+        shap_values = explainer(X_in).values
     else:
         import tensorflow as tf
         model = tf.keras.models.load_model(model_dir / "model.keras")
 
         def f(x):
+            x = np.asarray(x, dtype=np.float32)
             x_seq = x.reshape((x.shape[0], 1, x.shape[1]))
             return model.predict(x_seq, verbose=0).flatten()
 
+        background = shap.sample(X_in, min(n_background, X_in.shape[0]))
         explainer = shap.KernelExplainer(f, background)
-        shap_values = explainer.shap_values(X_in[:100], nsamples=100)
-        X_in = X_in[:100]
+        explain_sample_count = min(20, X_in.shape[0])
+        shap_values = explainer.shap_values(X_in[:explain_sample_count], nsamples=50)
+        if isinstance(shap_values, list):
+            shap_values = np.array(shap_values[0])
 
     mean_abs_shap = np.abs(shap_values).mean(axis=0)
     importance = pd.DataFrame({
