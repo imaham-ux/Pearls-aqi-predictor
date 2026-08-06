@@ -36,7 +36,7 @@ FEATURE_GROUP_NAME = "aqi_features"
 # underlying Delta table location itself never initialized correctly).
 # Bumping to a clean version number gives us a fresh, never-touched feature
 # group instead of continuing to fight a corrupted one.
-FEATURE_GROUP_VERSION = 3
+FEATURE_GROUP_VERSION = 2
 FEATURE_VIEW_NAME = "aqi_feature_view"
 
 # ---- Alerts ----
