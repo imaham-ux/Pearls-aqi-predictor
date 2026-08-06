@@ -13,11 +13,30 @@ All free-tier, real, production APIs (no mocking / no fake data).
 import time
 import logging
 import requests
-
+import random
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("api_client")
+# Shared session with automatic retries
+_session = requests.Session()
+
+_retry_strategy = Retry(
+    total=5,
+    connect=5,
+    read=5,
+    status=5,
+    backoff_factor=1,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=frozenset(["GET"]),
+    raise_on_status=False,
+)
+
+_adapter = HTTPAdapter(max_retries=_retry_strategy)
+_session.mount("https://", _adapter)
+_session.mount("http://", _adapter)
 
 AQICN_BASE = "https://api.waqi.info"
 OWM_BASE = "https://api.openweathermap.org/data/2.5"
@@ -30,19 +49,38 @@ class APIError(Exception):
     pass
 
 
-def _get(url, params, retries=3, backoff=2):
+def _get(url, params, retries=5, timeout=30):
+    """
+    Robust HTTP GET with retries, exponential backoff and longer timeout.
+    """
     last_err = None
-    for attempt in range(retries):
-        try:
-            resp = requests.get(url, params=params, timeout=15)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            logger.warning("Request failed (attempt %s/%s): %s", attempt + 1, retries, e)
-            time.sleep(backoff * (attempt + 1))
-    raise APIError(f"Failed after {retries} retries: {last_err}")
 
+    for attempt in range(1, retries + 1):
+        try:
+            response = _session.get(
+                url,
+                params=params,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        except requests.RequestException as e:
+            last_err = e
+
+            sleep_time = (2 ** (attempt - 1)) + random.uniform(0, 1)
+
+            logger.warning(
+                "Request failed (attempt %s/%s): %s. Retrying in %.1f seconds...",
+                attempt,
+                retries,
+                e,
+                sleep_time,
+            )
+
+            time.sleep(sleep_time)
+
+    raise APIError(f"Failed after {retries} retries: {last_err}")
 
 def get_aqicn_current(city: str = None) -> dict:
     """
