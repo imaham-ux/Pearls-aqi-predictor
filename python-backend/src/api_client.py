@@ -250,8 +250,9 @@ def get_open_meteo_weather_history(lat: float, lon: float, start_date: str, end_
 
 
 def get_open_meteo_current(lat: float, lon: float) -> dict:
-    """Current AQI + pollutants + weather in one place, free & keyless. Handy as
-    a backup source if AQICN/OpenWeather are ever down."""
+    """Current AQI + pollutants + weather in one place, free & keyless. Used
+    as the PRIMARY source for live dashboard readings (see api_client.py
+    module docstring / team discussion on AQICN staleness+missing sensors)."""
     aq_params = {
         "latitude": lat, "longitude": lon,
         "hourly": "us_aqi,pm2_5,pm10,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone",
@@ -259,16 +260,16 @@ def get_open_meteo_current(lat: float, lon: float) -> dict:
     }
     weather_params = {
         "latitude": lat, "longitude": lon,
-        "current": "temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,cloud_cover",
+        "current": "temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m,cloud_cover",
         "timezone": "UTC",
     }
     aq_data = _get(OPEN_METEO_AIR_QUALITY_BASE, aq_params)
     weather_data = _get(OPEN_METEO_FORECAST_BASE, weather_params)
-
+ 
     hourly = aq_data.get("hourly", {})
     idx = 0  # first hourly entry ~= current hour
     current = weather_data.get("current", {})
-
+ 
     return {
         "source": "open-meteo",
         "timestamp": hourly.get("time", [None])[idx],
@@ -283,5 +284,6 @@ def get_open_meteo_current(lat: float, lon: float) -> dict:
         "humidity": current.get("relative_humidity_2m"),
         "pressure": current.get("surface_pressure"),
         "wind_speed": current.get("wind_speed_10m"),
+        "wind_deg": current.get("wind_direction_10m"),
         "clouds": current.get("cloud_cover"),
     }

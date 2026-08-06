@@ -81,42 +81,68 @@ def aqi_current():
     lat = float(request.args.get("lat", config.LATITUDE))
     lon = float(request.args.get("lon", config.LONGITUDE))
     country = request.args.get("country", "Pakistan")
-
+ 
+    om = None
+    aqicn = None
+    try:
+        om = api_client.get_open_meteo_current(lat, lon)
+    except Exception as e:  # noqa: BLE001
+        pass
     try:
         aqicn_slug = city.strip().lower().replace(" ", "-")
         aqicn = api_client.get_aqicn_current(aqicn_slug)
-        weather = api_client.get_owm_current_weather(lat, lon)
-
+    except Exception as e:  # noqa: BLE001
+        pass
+ 
+    if om is None and aqicn is None:
+        return jsonify({"error": "Both Open-Meteo and AQICN are unavailable right now."}), 502
+ 
+    try:
+        if om is not None:
+            # Primary: Open-Meteo has real values for ALL 6 pollutants (the
+            # Karachi AQICN/WAQI station only reports PM2.5, everything else
+            # comes back missing - not actually zero).
+            aqi_val = om["aqi"]
+            pollutants = {
+                "pm25": om.get("pm25") or 0, "pm10": om.get("pm10") or 0,
+                "o3": om.get("o3") or 0, "no2": om.get("no2") or 0,
+                "so2": om.get("so2") or 0, "co": om.get("co") or 0,
+            }
+            weather = {
+                "temperature": om["temp"], "humidity": om["humidity"],
+                "windSpeed": round((om["wind_speed"] or 0) * 3.6, 1),  # m/s -> km/h
+                "windDirection": wind_deg_to_compass(om.get("wind_deg")),
+                "pressure": om["pressure"], "precipitation": 0,
+            }
+            timestamp = om.get("timestamp") or datetime.now(timezone.utc).isoformat()
+        else:
+            # Fallback: AQICN + OpenWeather weather (Open-Meteo unavailable)
+            aqi_val = aqicn["aqi"]
+            pollutants = {
+                "pm25": aqicn.get("pm25") or 0, "pm10": aqicn.get("pm10") or 0,
+                "o3": aqicn.get("o3") or 0, "no2": aqicn.get("no2") or 0,
+                "so2": aqicn.get("so2") or 0, "co": aqicn.get("co") or 0,
+            }
+            owm_weather = api_client.get_owm_current_weather(lat, lon)
+            weather = {
+                "temperature": owm_weather["temp"], "humidity": owm_weather["humidity"],
+                "windSpeed": round(owm_weather["wind_speed"] * 3.6, 1),
+                "windDirection": wind_deg_to_compass(owm_weather.get("wind_deg")),
+                "pressure": owm_weather["pressure"], "precipitation": 0,
+            }
+            timestamp = aqicn.get("timestamp") or datetime.now(timezone.utc).isoformat()
+ 
         result = {
-            "city": city,
-            "country": country,
-            "latitude": lat,
-            "longitude": lon,
-            "aqi": aqicn["aqi"],
-            "category": get_aqi_category(aqicn["aqi"]),
-            "primaryPollutant": "pm25" if (aqicn.get("pm25") or 0) >= (aqicn.get("pm10") or 0) else "pm10",
-            "timestamp": aqicn.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-            "pollutants": {
-                "pm25": aqicn.get("pm25") or 0,
-                "pm10": aqicn.get("pm10") or 0,
-                "o3": aqicn.get("o3") or 0,
-                "no2": aqicn.get("no2") or 0,
-                "so2": aqicn.get("so2") or 0,
-                "co": aqicn.get("co") or 0,
-            },
-            "weather": {
-                "temperature": weather["temp"],
-                "humidity": weather["humidity"],
-                "windSpeed": round(weather["wind_speed"] * 3.6, 1),  # m/s -> km/h
-                "windDirection": wind_deg_to_compass(weather.get("wind_deg")),
-                "pressure": weather["pressure"],
-                "precipitation": 0,
-            },
+            "city": city, "country": country, "latitude": lat, "longitude": lon,
+            "aqi": aqi_val, "category": get_aqi_category(aqi_val),
+            "primaryPollutant": "pm25" if pollutants["pm25"] >= pollutants["pm10"] else "pm10",
+            "timestamp": timestamp,
+            "pollutants": pollutants,
+            "weather": weather,
         }
         return jsonify(result)
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": str(e)}), 502
-
 
 # ---------------------------------------------------------------------------
 # /api/aqi/forecast - REAL ML model for the trained city, real OWM forecast
