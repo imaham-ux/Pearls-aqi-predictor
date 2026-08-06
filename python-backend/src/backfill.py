@@ -143,7 +143,7 @@ def run(days: int = 730, triggered_by: str = "manual"):
 
         if lag_columns:
             featurized = featurized.dropna(subset=lag_columns)
-
+        featurized["aqi"] = featurized["aqi"].astype("float64")
         store = get_feature_store()
         store.insert(featurized)
 
