@@ -4,8 +4,11 @@ Real API clients for:
   - OpenWeather Air Pollution + Weather + Historical Air Pollution APIs
       https://openweathermap.org/api/air-pollution
       https://openweathermap.org/current
+  - Open-Meteo Air Quality + Historical Weather Archive (no API key required!)
+      https://open-meteo.com/en/docs/air-quality-api
+      https://open-meteo.com/en/docs/historical-weather-api
 
-Both are free-tier, real, production APIs (no mocking / no fake data).
+All free-tier, real, production APIs (no mocking / no fake data).
 """
 import time
 import logging
@@ -18,6 +21,9 @@ logger = logging.getLogger("api_client")
 
 AQICN_BASE = "https://api.waqi.info"
 OWM_BASE = "https://api.openweathermap.org/data/2.5"
+OPEN_METEO_AIR_QUALITY_BASE = "https://air-quality-api.open-meteo.com/v1/air-quality"
+OPEN_METEO_ARCHIVE_BASE = "https://archive-api.open-meteo.com/v1/archive"
+OPEN_METEO_FORECAST_BASE = "https://api.open-meteo.com/v1/forecast"
 
 
 class APIError(Exception):
@@ -180,3 +186,102 @@ def owm_aqi_index_to_us_aqi(components: dict) -> float:
         if c_lo <= pm25 <= c_hi:
             return round(((i_hi - i_lo) / (c_hi - c_lo)) * (pm25 - c_lo) + i_lo, 1)
     return 500.0  # cap
+
+
+# ---------------------------------------------------------------------------
+# Open-Meteo (no API key required, generous free limits)
+#   - Air Quality API: hourly pollutants + a directly-computed US AQI value,
+#     historical data available since ~2022-07-29 (CAMS reanalysis).
+#   - Historical Weather Archive: hourly temp/humidity/pressure/wind/clouds,
+#     going back decades - solves the gap where OpenWeather's free tier had
+#     no bulk historical weather.
+# ---------------------------------------------------------------------------
+def get_open_meteo_air_quality_history(lat: float, lon: float, start_date: str, end_date: str) -> list:
+    """start_date/end_date as 'YYYY-MM-DD' strings (UTC). Returns hourly records
+    with a real US AQI computed by Open-Meteo itself (no approximation needed)."""
+    params = {
+        "latitude": lat, "longitude": lon,
+        "start_date": start_date, "end_date": end_date,
+        "hourly": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,us_aqi",
+        "timezone": "UTC",
+    }
+    data = _get(OPEN_METEO_AIR_QUALITY_BASE, params)
+    hourly = data.get("hourly", {})
+    times = hourly.get("time", [])
+
+    records = []
+    for i, ts in enumerate(times):
+        records.append({
+            "datetime": ts,
+            "aqi": hourly.get("us_aqi", [None] * len(times))[i],
+            "pm25": hourly.get("pm2_5", [None] * len(times))[i],
+            "pm10": hourly.get("pm10", [None] * len(times))[i],
+            "co": hourly.get("carbon_monoxide", [None] * len(times))[i],
+            "no2": hourly.get("nitrogen_dioxide", [None] * len(times))[i],
+            "so2": hourly.get("sulphur_dioxide", [None] * len(times))[i],
+            "o3": hourly.get("ozone", [None] * len(times))[i],
+        })
+    return records
+
+
+def get_open_meteo_weather_history(lat: float, lon: float, start_date: str, end_date: str) -> list:
+    """Real historical hourly weather from Open-Meteo's archive (no key needed)."""
+    params = {
+        "latitude": lat, "longitude": lon,
+        "start_date": start_date, "end_date": end_date,
+        "hourly": "temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,cloud_cover",
+        "timezone": "UTC",
+    }
+    data = _get(OPEN_METEO_ARCHIVE_BASE, params)
+    hourly = data.get("hourly", {})
+    times = hourly.get("time", [])
+
+    records = []
+    for i, ts in enumerate(times):
+        records.append({
+            "datetime": ts,
+            "temp": hourly.get("temperature_2m", [None] * len(times))[i],
+            "humidity": hourly.get("relative_humidity_2m", [None] * len(times))[i],
+            "pressure": hourly.get("surface_pressure", [None] * len(times))[i],
+            "wind_speed": hourly.get("wind_speed_10m", [None] * len(times))[i],
+            "clouds": hourly.get("cloud_cover", [None] * len(times))[i],
+        })
+    return records
+
+
+def get_open_meteo_current(lat: float, lon: float) -> dict:
+    """Current AQI + pollutants + weather in one place, free & keyless. Handy as
+    a backup source if AQICN/OpenWeather are ever down."""
+    aq_params = {
+        "latitude": lat, "longitude": lon,
+        "hourly": "us_aqi,pm2_5,pm10,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone",
+        "forecast_days": 1, "timezone": "UTC",
+    }
+    weather_params = {
+        "latitude": lat, "longitude": lon,
+        "current": "temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,cloud_cover",
+        "timezone": "UTC",
+    }
+    aq_data = _get(OPEN_METEO_AIR_QUALITY_BASE, aq_params)
+    weather_data = _get(OPEN_METEO_FORECAST_BASE, weather_params)
+
+    hourly = aq_data.get("hourly", {})
+    idx = 0  # first hourly entry ~= current hour
+    current = weather_data.get("current", {})
+
+    return {
+        "source": "open-meteo",
+        "timestamp": hourly.get("time", [None])[idx],
+        "aqi": hourly.get("us_aqi", [None])[idx],
+        "pm25": hourly.get("pm2_5", [None])[idx],
+        "pm10": hourly.get("pm10", [None])[idx],
+        "co": hourly.get("carbon_monoxide", [None])[idx],
+        "no2": hourly.get("nitrogen_dioxide", [None])[idx],
+        "so2": hourly.get("sulphur_dioxide", [None])[idx],
+        "o3": hourly.get("ozone", [None])[idx],
+        "temp": current.get("temperature_2m"),
+        "humidity": current.get("relative_humidity_2m"),
+        "pressure": current.get("surface_pressure"),
+        "wind_speed": current.get("wind_speed_10m"),
+        "clouds": current.get("cloud_cover"),
+    }

@@ -1,0 +1,41 @@
+ADD THIS TO python-backend/app/flask_api.py
+=============================================
+This is a PURELY ADDITIVE patch - nothing existing is changed or removed.
+Apply the two edits below to your existing flask_api.py file.
+
+
+EDIT 1 - add this import near the top, with the other imports:
+-----------------------------------------------------------------
+import pandas as pd
+
+
+EDIT 2 - add this new route anywhere among your other @app.route functions
+(e.g. right after the feature_store_view function):
+-----------------------------------------------------------------
+@app.route("/api/aqi/history")
+def aqi_history():
+    """Real historical AQI trend data for the frontend's 'Historical Trends'
+    chart, filterable by 7/30/90 days. Purely additive - reads from the same
+    feature store other endpoints already use, nothing else is touched."""
+    try:
+        days = int(request.args.get("days", 30))
+        df = load_history()
+        if df.empty:
+            return jsonify({"days": days, "points": [], "count": 0})
+
+        cutoff = df["datetime"].max() - pd.Timedelta(days=days)
+        filtered = df[df["datetime"] >= cutoff].sort_values("datetime")
+
+        points = []
+        for _, row in filtered.iterrows():
+            aqi_val = row.get("aqi")
+            points.append({
+                "timestamp": row["datetime"].isoformat(),
+                "aqi": round(float(aqi_val), 1) if pd.notna(aqi_val) else None,
+                "pm25": round(float(row["pm25"]), 1) if pd.notna(row.get("pm25")) else None,
+                "pm10": round(float(row["pm10"]), 1) if pd.notna(row.get("pm10")) else None,
+            })
+
+        return jsonify({"days": days, "points": points, "count": len(points)})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500

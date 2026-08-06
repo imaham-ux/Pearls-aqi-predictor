@@ -1,6 +1,0 @@
-{
-  "name": "Pearls AQI Predictor",
-  "description": "Serverless 3-day Air Quality Index (AQI) forecasting pipeline and dashboard with feature store, model registry, SHAP explainability, and AI health advisory.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

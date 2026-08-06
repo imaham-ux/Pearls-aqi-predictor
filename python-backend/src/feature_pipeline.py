@@ -1,11 +1,21 @@
 """
 Feature Pipeline (runs every hour via GitHub Actions / Airflow).
 
-1. Fetch current AQI + pollutants from AQICN (ground-truth AQI reading)
-2. Fetch current weather from OpenWeather (drivers of AQI)
-3. Merge into a single row, compute time + derived features using recent
-   history pulled from the feature store (for lags/rolling stats)
-4. Insert the new row into the Feature Store
+1. Fetch current pollutant + weather data - PRIMARY source is Open-Meteo
+   (same source used by backfill, so train/serve features stay consistent;
+   it also updates every hour with real variation).
+   AQICN (ground station) is kept as a SECONDARY cross-check / fallback only,
+   with staleness detection: WAQI/AQICN ground stations sometimes only
+   refresh on a multi-hour cycle, which can otherwise silently feed the
+   feature store several duplicate hourly readings (e.g. AQI "161" repeated
+   3+ hours in a row) - training on that teaches the model a fake flat
+   pattern instead of real signal. See team discussion / mentor guidance
+   (Umema Ashar, 10Pearls, 2026-08-03): use OpenWeather-family data as the
+   primary live pollutant source for feature computation, keep WAQI as a
+   secondary check/fallback with staleness detection.
+2. Compute time + derived features using recent history pulled from the
+   feature store (for lags/rolling stats)
+3. Insert the new row into the Feature Store
 """
 import logging
 import pandas as pd
@@ -20,25 +30,89 @@ from src.run_logger import log_run_start, log_run_end
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("feature_pipeline")
 
+STALENESS_LOOKBACK_HOURS = 3
 
-def fetch_current_raw_row() -> dict:
-    aqicn = api_client.get_aqicn_current()
-    weather = api_client.get_owm_current_weather()
+
+def _is_aqicn_stale(history: pd.DataFrame, aqicn_value: float, lookback: int = STALENESS_LOOKBACK_HOURS) -> bool:
+    """True if the last `lookback` stored hourly rows all carry this EXACT same
+    AQI value - i.e. the WAQI/AQICN ground station hasn't actually refreshed,
+    it's just repeating its last reading. Not an error by itself (ground
+    stations do update on a multi-hour cycle), but we don't want to treat a
+    repeated stale reading as a fresh live pollutant reading for training."""
+    try:
+        if history is None or history.empty or "aqi" not in history.columns or aqicn_value is None:
+            return False
+        recent = history.sort_values("datetime").tail(lookback)
+        if len(recent) < lookback:
+            return False
+        return bool((recent["aqi"].round(1) == round(float(aqicn_value), 1)).all())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def fetch_current_raw_row(history: pd.DataFrame = None) -> dict:
+    om = None
+    aqicn = None
+
+    try:
+        om = api_client.get_open_meteo_current(config.LATITUDE, config.LONGITUDE)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Open-Meteo current reading failed (%s).", e)
+
+    try:
+        aqicn = api_client.get_aqicn_current()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("AQICN current reading failed (%s).", e)
+
+    if om is None and aqicn is None:
+        raise RuntimeError("Both Open-Meteo and AQICN failed - no live AQI reading available this hour.")
+
+    aqicn_is_stale = False
+    if aqicn is not None:
+        aqicn_is_stale = _is_aqicn_stale(history, aqicn.get("aqi"))
+        if aqicn_is_stale:
+            logger.warning(
+                "AQICN AQI (%.1f) is identical to the last %d stored hourly readings - "
+                "ground station likely hasn't refreshed yet (multi-hour update cycle). "
+                "Using Open-Meteo as the primary source for this hour instead.",
+                aqicn["aqi"], STALENESS_LOOKBACK_HOURS,
+            )
+
+    if om is not None:
+        # Open-Meteo is the primary source (per team guidance): more frequent,
+        # real hourly variation -> the model actually has signal to learn from.
+        source = "open-meteo"
+        aqi, pm25, pm10 = om["aqi"], om["pm25"], om["pm10"]
+        o3, no2, so2, co = om["o3"], om["no2"], om["so2"], om["co"]
+        temp, humidity = om["temp"], om["humidity"]
+        pressure, wind_speed, clouds = om["pressure"], om["wind_speed"], om["clouds"]
+    else:
+        # Open-Meteo unavailable this hour - fall back to AQICN + OpenWeather
+        # weather. (We still use it even if flagged stale, since a stale-but-
+        # real reading beats having no reading at all for this hour.)
+        source = "aqicn (fallback)" + (" [stale]" if aqicn_is_stale else "")
+        aqi, pm25, pm10 = aqicn["aqi"], aqicn["pm25"], aqicn["pm10"]
+        o3, no2, so2, co = aqicn["o3"], aqicn["no2"], aqicn["so2"], aqicn["co"]
+        weather = api_client.get_owm_current_weather()
+        temp, humidity = weather["temp"], weather["humidity"]
+        pressure, wind_speed, clouds = weather["pressure"], weather["wind_speed"], weather["clouds"]
+
+    logger.info("Live reading source for this hour: %s (AQI=%.1f)", source, aqi)
 
     row = {
         "datetime": datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0),
-        "aqi": aqicn["aqi"],
-        "pm25": aqicn["pm25"],
-        "pm10": aqicn["pm10"],
-        "o3": aqicn["o3"],
-        "no2": aqicn["no2"],
-        "so2": aqicn["so2"],
-        "co": aqicn["co"],
-        "temp": weather["temp"],
-        "humidity": weather["humidity"],
-        "pressure": weather["pressure"],
-        "wind_speed": weather["wind_speed"],
-        "clouds": weather["clouds"],
+        "aqi": aqi,
+        "pm25": pm25,
+        "pm10": pm10,
+        "o3": o3,
+        "no2": no2,
+        "so2": so2,
+        "co": co,
+        "temp": temp,
+        "humidity": humidity,
+        "pressure": pressure,
+        "wind_speed": wind_speed,
+        "clouds": clouds,
         "city": config.CITY_NAME,
     }
     return row
@@ -55,7 +129,7 @@ def run(triggered_by: str = "scheduler"):
         store = get_feature_store()
 
         history = store.read()
-        new_row = fetch_current_raw_row()
+        new_row = fetch_current_raw_row(history)
         new_df = pd.DataFrame([new_row])
 
         if not history.empty:
@@ -69,22 +143,16 @@ def run(triggered_by: str = "scheduler"):
         latest_row = featurized.tail(1)
 
         if not history.empty:
-            # IMPORTANT: the Hopsworks feature group's schema was locked in by the
-            # very first backfill insert, which (due to OpenWeather's free tier not
-            # offering bulk historical weather) never included live-weather columns
-            # like temp/humidity/pressure/wind_speed/clouds (or the heat_humidity_index/
-            # low_wind_flag derived from them). If this hourly row includes those
-            # extra columns, Hopsworks rejects the insert with a schema-mismatch
-            # error. So: only send columns that already exist in the established
-            # schema (i.e. in `history`), keeping this hourly job self-contained -
-            # it never needs backfill.py or train_pipeline.py to change.
+            # IMPORTANT: only send columns that already exist in the established
+            # Hopsworks schema (from backfill) - keeps this hourly job self-
+            # contained and safe even if the live reading ever carries extra
+            # columns the trained schema doesn't have yet.
             existing_cols = [c for c in history.columns if c in latest_row.columns]
             dropped_cols = [c for c in latest_row.columns if c not in history.columns]
             if dropped_cols:
                 logger.info(
-                    "Dropping columns not present in the existing feature group schema "
-                    "(collected for potential future use, but not yet part of the trained "
-                    "schema): %s", dropped_cols,
+                    "Dropping columns not present in the existing feature group schema: %s",
+                    dropped_cols,
                 )
             latest_row = latest_row[existing_cols]
 

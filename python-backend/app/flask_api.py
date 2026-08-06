@@ -27,6 +27,8 @@ import sys
 import json
 import math
 import threading
+import numpy as np
+import pandas as pd
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
@@ -38,6 +40,7 @@ from flask_cors import CORS
 import config
 from src import api_client
 from src.eda import load_history
+from src.feature_store import get_feature_store
 from src.run_logger import get_runs
 
 app = Flask(__name__)
@@ -203,8 +206,9 @@ def aqi_forecast():
             date_str = target_date.strftime("%Y-%m-%d")
             day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
             day_of_week = day_names[target_date.weekday()]
-            display_date = (f"Tomorrow ({target_date.strftime('%b %-d')})" if day_offset == 1
-                             else f"Day {day_offset} ({target_date.strftime('%b %-d')})")
+            display_day = target_date.strftime("%b %d").replace(" 0", " ")
+            display_date = (f"Tomorrow ({display_day})" if day_offset == 1
+                             else f"Day {day_offset} ({display_day})")
 
             hourly_curve = _build_hourly_curve(start_aqi, end_aqi, n_points=12)
             mae = mae_by_horizon.get(horizon, 8.0)
@@ -317,6 +321,13 @@ def _build_feature_records(df):
     if df.empty:
         return []
 
+    def _clean(v):
+        if pd.isna(v):
+            return None
+        if isinstance(v, (np.generic,)):
+            return v.item()
+        return v
+
     # compute real 24h/48h/72h-ahead targets for display (same logic as training)
     d = df.sort_values("datetime").copy()
     d["targetAQI24h"] = d["aqi"].shift(-24)
@@ -326,8 +337,16 @@ def _build_feature_records(df):
     sample = d.tail(50)
     records = []
     for _, row in sample.iterrows():
-        wind_speed = row.get("wind_speed")
-        pm25, pm10 = row.get("pm25"), row.get("pm10")
+        wind_speed = _clean(row.get("wind_speed"))
+        pm25 = _clean(row.get("pm25"))
+        pm10 = _clean(row.get("pm10"))
+        aqi_lag_1h = _clean(row.get("aqi_lag_1h"))
+        aqi_lag_24h = _clean(row.get("aqi_lag_24h"))
+        aqi_change_rate = _clean(row.get("aqi_change_rate"))
+        target_aqi_24h = _clean(row.get("targetAQI24h"))
+        target_aqi_48h = _clean(row.get("targetAQI48h"))
+        target_aqi_72h = _clean(row.get("targetAQI72h"))
+
         records.append({
             "featureId": f"feat-{row['city']}-{int(row['datetime'].timestamp())}",
             "entityId": row["city"],
@@ -335,18 +354,18 @@ def _build_feature_records(df):
             "hour": int(row["hour"]) if pd_notna(row.get("hour")) else None,
             "dayOfWeek": int(row["weekday"]) if pd_notna(row.get("weekday")) else None,
             "month": int(row["month"]) if pd_notna(row.get("month")) else None,
-            "temp": row.get("temp"),
-            "humidity": row.get("humidity"),
+            "temp": _clean(row.get("temp")),
+            "humidity": _clean(row.get("humidity")),
             "windSpeed": wind_speed,
-            "pressure": row.get("pressure"),
-            "aqiLag1h": row.get("aqi_lag_1h"),
-            "aqiLag24h": row.get("aqi_lag_24h"),
-            "aqiChangeRate": row.get("aqi_change_rate"),
-            "pm25Ratio": round(pm25 / pm10, 3) if pm25 and pm10 else None,
+            "pressure": _clean(row.get("pressure")),
+            "aqiLag1h": aqi_lag_1h,
+            "aqiLag24h": aqi_lag_24h,
+            "aqiChangeRate": aqi_change_rate,
+            "pm25Ratio": round(pm25 / pm10, 3) if pm25 is not None and pm10 is not None and pm10 != 0 else None,
             "windDispersionIndex": round(1 / (1 + wind_speed), 3) if wind_speed is not None else None,
-            "targetAQI24h": row.get("targetAQI24h"),
-            "targetAQI48h": row.get("targetAQI48h"),
-            "targetAQI72h": row.get("targetAQI72h"),
+            "targetAQI24h": target_aqi_24h,
+            "targetAQI48h": target_aqi_48h,
+            "targetAQI72h": target_aqi_72h,
         })
     return records
 
@@ -359,14 +378,15 @@ def pd_notna(v):
 @app.route("/api/feature-store")
 def feature_store_view():
     try:
-        df = load_history()
+        store = get_feature_store()
+        df = store.read()
         sample = _build_feature_records(df)
         feature_view = {
             "name": "aqi_features",
             "version": 1,
             "entity": config.CITY_NAME,
             "features": [c for c in df.columns if c != "datetime"] if not df.empty else [],
-            "onlineStoreEnabled": config.USE_HOPSWORKS,
+            "onlineStoreEnabled": store.backend_name == "Hopsworks",
             "ttlDays": 90,
             "recordCount": len(df),
             "lastIngested": df["datetime"].max().isoformat() if not df.empty else None,
@@ -375,8 +395,36 @@ def feature_store_view():
             "featureViews": [feature_view],
             "sampleRecords": sample,
             "totalRecords": len(df),
-            "backend": "Hopsworks" if config.USE_HOPSWORKS else "Local parquet (fallback)",
+            "backend": store.backend_name,
         })
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/aqi/history")
+def aqi_history():
+    """Real historical AQI trend data for the frontend's 'Historical Trends'
+    chart, filterable by 7/30/90 days. Purely additive - reads from the same
+    feature store other endpoints already use, nothing else is touched."""
+    try:
+        days = int(request.args.get("days", 30))
+        df = load_history()
+        if df.empty:
+            return jsonify({"days": days, "points": [], "count": 0})
+
+        cutoff = df["datetime"].max() - pd.Timedelta(days=days)
+        filtered = df[df["datetime"] >= cutoff].sort_values("datetime")
+
+        points = []
+        for _, row in filtered.iterrows():
+            aqi_val = row.get("aqi")
+            points.append({
+                "timestamp": row["datetime"].isoformat(),
+                "aqi": round(float(aqi_val), 1) if pd.notna(aqi_val) else None,
+                "pm25": round(float(row["pm25"]), 1) if pd.notna(row.get("pm25")) else None,
+                "pm10": round(float(row["pm10"]), 1) if pd.notna(row.get("pm10")) else None,
+            })
+
+        return jsonify({"days": days, "points": points, "count": len(points)})
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": str(e)}), 500
 

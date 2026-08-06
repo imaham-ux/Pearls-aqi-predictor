@@ -73,6 +73,8 @@ def _coerce_dtypes_for_hopsworks(df: pd.DataFrame) -> pd.DataFrame:
 class LocalFeatureStore:
     """Drop-in local replacement for a Hopsworks feature group."""
 
+    backend_name = "Local parquet (fallback)"
+
     def __init__(self, key_col="datetime"):
         self.key_col = key_col
 
@@ -97,6 +99,8 @@ class LocalFeatureStore:
 
 class HopsworksFeatureStore:
     """Real Hopsworks-backed feature group."""
+
+    backend_name = "Hopsworks"
 
     def __init__(self):
         import hopsworks  # imported lazily so local mode never requires the package to succeed at import time

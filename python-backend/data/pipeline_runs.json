@@ -47,5 +47,37 @@
       "72h: best=lstm rmse=9.185",
       "Finished with status=success in 95.56s"
     ]
+  },
+  {
+    "id": "run-77b8e589",
+    "name": "Historical Data Backfill (Karachi, 730d)",
+    "type": "backfill",
+    "status": "success",
+    "startTime": "2026-08-06T13:48:45.686486+00:00",
+    "durationSeconds": 58.69,
+    "recordsProcessed": 17520,
+    "triggeredBy": "Web Dashboard Manual Backfill",
+    "logs": [
+      "Started: Historical Data Backfill (Karachi, 730d)",
+      "Fetched 17544 raw hourly records from Open-Meteo (air quality + weather)",
+      "Wrote 17520 feature rows to feature store",
+      "Finished with status=success in 58.69s"
+    ]
+  },
+  {
+    "id": "run-cd3fea29",
+    "name": "Historical Data Backfill (Karachi, 730d)",
+    "type": "backfill",
+    "status": "success",
+    "startTime": "2026-08-06T13:48:47.040337+00:00",
+    "durationSeconds": 57.05,
+    "recordsProcessed": 17520,
+    "triggeredBy": "Web Dashboard Manual Backfill",
+    "logs": [
+      "Started: Historical Data Backfill (Karachi, 730d)",
+      "Fetched 17544 raw hourly records from Open-Meteo (air quality + weather)",
+      "Wrote 17520 feature rows to feature store",
+      "Finished with status=success in 57.05s"
+    ]
   }
 ]
