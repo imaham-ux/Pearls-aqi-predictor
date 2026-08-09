@@ -7,6 +7,8 @@ interface Props {
   sampleRecords: FeatureRecord[];
   totalRecords: number;
   backend: string;
+  loading?: boolean;
+  error?: string | null;
   onTriggerBackfill: (days: number) => Promise<void>;
 }
 
@@ -21,7 +23,7 @@ const DISPLAY_COLUMNS: { key: keyof FeatureRecord; label: string }[] = [
   { key: 'targetAQI24h', label: 'Target +24h' }
 ];
 
-export const FeatureStoreView: React.FC<Props> = ({ featureViews, sampleRecords, totalRecords, backend, onTriggerBackfill }) => {
+export const FeatureStoreView: React.FC<Props> = ({ featureViews, sampleRecords, totalRecords, backend, loading, error, onTriggerBackfill }) => {
   const [backfillDays, setBackfillDays] = useState(730);
   const [triggering, setTriggering] = useState(false);
   const fv = featureViews[0];
@@ -42,6 +44,12 @@ export const FeatureStoreView: React.FC<Props> = ({ featureViews, sampleRecords,
         <StatCard icon={Layers} label="Backend" value={backend} />
         <StatCard icon={RefreshCw} label="Last Ingested" value={fv?.lastIngested ? new Date(fv.lastIngested).toLocaleString() : '—'} />
       </div>
+
+      {error && (
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-5 text-sm text-red-200">
+          <strong>Error loading feature store:</strong> {error}
+        </div>
+      )}
 
       {fv && (
         <div className="rounded-2xl border border-base-700 bg-base-900 p-5">
@@ -77,7 +85,9 @@ export const FeatureStoreView: React.FC<Props> = ({ featureViews, sampleRecords,
 
       <div className="rounded-2xl border border-base-700 bg-base-900 p-5 overflow-x-auto">
         <h3 className="font-display text-sm font-semibold text-slate-100 mb-3">Sample Feature Rows</h3>
-        {sampleRecords.length === 0 ? (
+        {loading ? (
+          <p className="text-sm text-slate-500">Loading feature store data…</p>
+        ) : sampleRecords.length === 0 ? (
           <p className="text-sm text-slate-500">No records yet — trigger a backfill to populate the feature store.</p>
         ) : (
           <table className="w-full text-xs">

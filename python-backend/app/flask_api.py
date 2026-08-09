@@ -143,7 +143,7 @@ def aqi_current():
         return jsonify(result)
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": str(e)}), 502
-
+    
 # ---------------------------------------------------------------------------
 # /api/aqi/forecast - REAL ML model for the trained city, real OWM forecast
 #                     API for any other city (never random/fake)

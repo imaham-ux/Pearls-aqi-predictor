@@ -37,11 +37,14 @@ const App: React.FC = () => {
   const [sampleRecords, setSampleRecords] = useState<FeatureRecord[]>([]);
   const [totalRecords, setTotalRecords] = useState(0);
   const [fsBackend, setFsBackend] = useState('');
+  const [featureStoreLoading, setFeatureStoreLoading] = useState(false);
+  const [featureStoreError, setFeatureStoreError] = useState<string | null>(null);
 
   const [models, setModels] = useState<MLModelMeta[]>([]);
 
   const [shapByDay, setShapByDay] = useState<Record<number, ShapDayExplanation | null>>({});
   const [shapLoadingDay, setShapLoadingDay] = useState<number | null>(null);
+  const [shapErrors, setShapErrors] = useState<Record<number, string | null>>({});
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +71,8 @@ const App: React.FC = () => {
   }, []);
 
   const loadFeatureStore = useCallback(async () => {
+    setFeatureStoreLoading(true);
+    setFeatureStoreError(null);
     try {
       const data = await api.featureStore();
       setFeatureViews(data.featureViews);
@@ -76,6 +81,9 @@ const App: React.FC = () => {
       setFsBackend(data.backend);
     } catch (err) {
       console.error('Error loading feature store:', err);
+      setFeatureStoreError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFeatureStoreLoading(false);
     }
   }, []);
 
@@ -90,11 +98,16 @@ const App: React.FC = () => {
 
   const loadShap = useCallback(async (dayOffset: number) => {
     setShapLoadingDay(dayOffset);
+    setShapErrors((prev) => ({ ...prev, [dayOffset]: null }));
     try {
       const data = await api.shap(dayOffset);
       setShapByDay((prev) => ({ ...prev, [dayOffset]: data }));
     } catch (err) {
       setShapByDay((prev) => ({ ...prev, [dayOffset]: null }));
+      setShapErrors((prev) => ({
+        ...prev,
+        [dayOffset]: err instanceof Error ? err.message : String(err),
+      }));
     } finally {
       setShapLoadingDay(null);
     }
@@ -119,6 +132,24 @@ const App: React.FC = () => {
       if (intervalRef.current) window.clearInterval(intervalRef.current);
     };
   }, [loadCore]);
+
+  useEffect(() => {
+    if (
+      activeTab === 'feature-store' &&
+      !featureStoreLoading &&
+      featureViews.length === 0 &&
+      sampleRecords.length === 0 &&
+      !featureStoreError
+    ) {
+      loadFeatureStore();
+    }
+  }, [activeTab, featureStoreLoading, featureViews.length, sampleRecords.length, featureStoreError, loadFeatureStore]);
+
+  useEffect(() => {
+    if (activeTab === 'shap-eda' && shapByDay[1] === undefined && shapLoadingDay !== 1) {
+      loadShap(1);
+    }
+  }, [activeTab, shapByDay, shapLoadingDay, loadShap]);
 
   const handleTriggerBackfill = async (days: number) => {
     await api.triggerBackfill(days);
@@ -212,6 +243,8 @@ const App: React.FC = () => {
                   sampleRecords={sampleRecords}
                   totalRecords={totalRecords}
                   backend={fsBackend}
+                  loading={featureStoreLoading}
+                  error={featureStoreError}
                   onTriggerBackfill={handleTriggerBackfill}
                 />
               </div>
@@ -229,7 +262,12 @@ const App: React.FC = () => {
 
             {activeTab === 'shap-eda' && (
               <div className="animate-fade-in">
-                <ShapAnalyticsView shapByDay={shapByDay} loadingDay={shapLoadingDay} onSelectDay={loadShap} />
+                <ShapAnalyticsView
+                  shapByDay={shapByDay}
+                  shapErrors={shapErrors}
+                  loadingDay={shapLoadingDay}
+                  onSelectDay={loadShap}
+                />
               </div>
             )}
           </>

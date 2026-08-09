@@ -4,17 +4,21 @@ import { ShapDayExplanation } from '../types';
 
 interface Props {
   shapByDay: Record<number, ShapDayExplanation | null>;
+  shapErrors: Record<number, string | null>;
   loadingDay: number | null;
   onSelectDay: (dayOffset: number) => void;
 }
 
-export const ShapAnalyticsView: React.FC<Props> = ({ shapByDay, loadingDay, onSelectDay }) => {
+export const ShapAnalyticsView: React.FC<Props> = ({ shapByDay, shapErrors, loadingDay, onSelectDay }) => {
   const [activeDay, setActiveDay] = useState(1);
   const data = shapByDay[activeDay];
+  const error = shapErrors[activeDay] ?? null;
 
   const handleSelect = (day: number) => {
     setActiveDay(day);
-    if (!shapByDay[day]) onSelectDay(day);
+    if (!shapByDay[day] && !shapErrors[day]) {
+      onSelectDay(day);
+    }
   };
 
   const maxAbs = data ? Math.max(...data.features.map((f) => Math.abs(f.shapValue)), 1) : 1;
@@ -46,7 +50,13 @@ export const ShapAnalyticsView: React.FC<Props> = ({ shapByDay, loadingDay, onSe
       <div className="rounded-2xl border border-base-700 bg-base-900 p-5">
         {loadingDay === activeDay && <p className="text-sm text-slate-500">Computing SHAP values…</p>}
 
-        {!loadingDay && !data && (
+        {error && (
+          <p className="text-sm text-red-200 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+            <strong>Could not load SHAP data:</strong> {error}
+          </p>
+        )}
+
+        {!loadingDay && !data && !error && (
           <p className="text-sm text-slate-500">
             SHAP isn't available yet for this horizon — train the model first from the Model Registry tab.
           </p>
