@@ -1,52 +1,92 @@
-# 🌫️ Pearls AQI Predictor
+# Pearls AQI Predictor
 
-A 3-day Air Quality Index forecasting app for Pakistani cities, combining:
-
-- **React + TypeScript + Vite** frontend (dashboard UI, Gemini-powered health advisor)
-- **Python ML backend** (real AQICN + OpenWeather APIs, scikit-learn + TensorFlow models,
-  SHAP explainability, Hopsworks feature store / local fallback)
-
-**Every number on this dashboard is real** — live AQI comes from AQICN, weather from
-OpenWeather, 3-day forecasts come from actually-trained Random Forest / Ridge / LSTM
-models (evaluated with RMSE/MAE/R²), and SHAP values are computed from those real
-models. Nothing is randomly generated.
+A 100% serverless machine learning system that forecasts Air Quality Index
+(AQI) for **Karachi, Pakistan** for the next 3 days — real data collection,
+feature engineering, model training, and a live dashboard, end to end.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────┐        ┌──────────────────────────┐
-│  React/Vite Frontend    │  HTTP  │  Node/Express (server.ts) │
-│  (port 3000, npm run dev)│◀──────▶│  - serves the UI           │
-└─────────────────────────┘        │  - proxies /api/* to Flask │
-                                    │  - calls Gemini for advice │
-                                    └────────────┬──────────────┘
-                                                 │ HTTP (proxy)
-                                                 ▼
-                                   ┌──────────────────────────┐
-                                   │  Flask API (python-backend)│
-                                   │  port 5001                 │
-                                   │  - AQICN + OpenWeather      │
-                                   │  - trained RF/Ridge/LSTM    │
-                                   │  - SHAP explainability      │
-                                   │  - Feature Store (Hopsworks │
-                                   │    or local parquet)        │
-                                   └──────────────────────────┘
+┌───────────────────┐        ┌────────────────────────┐
+│  React + Vite      │  HTTP  │  Flask REST API          │
+│  frontend/          │◀──────▶│  python-backend/           │
+│  (port 3000)         │        │  (port 5001)                 │
+└───────────────────┘        └──────────────┬──────────────┘
+                                             │
+                    ┌────────────────────────┼────────────────────────┐
+                    ▼                        ▼                        ▼
+            AQICN / OpenWeather /     Hopsworks Feature       Trained models
+            Open-Meteo APIs           Store (or local          (RandomForest,
+            (live + historical         parquet fallback)        Ridge, LSTM)
+            pollutant + weather                                 + SHAP
+            data)
 ```
 
-The Node server never talks to AQICN/OpenWeather/Hopsworks/scikit-learn directly —
-it's purely a UI + proxy layer. **All the real work happens in `python-backend/`.**
+- **`python-backend/`** — Flask API, feature engineering, training pipeline,
+  model registry, SHAP explainability, hazard alerts, GitHub Actions automation.
+- **`frontend/`** — React + TypeScript + Vite dashboard that consumes the
+  Flask API and nothing else. No mock data anywhere.
+
+The system is serverless in the sense that neither the data pipelines nor the
+API depend on an always-on application server of their own: the feature and
+training pipelines run as independent, stateless jobs (locally or as GitHub
+Actions runs on their own schedule), and the frontend is a static app that
+simply calls the Flask API over HTTP whenever it's running.
+
+---
+
+## Technology stack
+
+| Requirement | Used |
+|---|---|
+| Language | Python (backend), TypeScript (frontend) |
+| ML models | scikit-learn (Random Forest, Ridge Regression), TensorFlow (LSTM) |
+| Feature Store | Hopsworks (with a local-parquet fallback when no credentials are set) |
+| Automation | GitHub Actions (hourly feature ingestion, daily retraining, manual backfill) |
+| Web API | Flask |
+| Data sources | AQICN, OpenWeather, Open-Meteo — all real, no synthetic data |
+| Explainability | SHAP |
+| Version control | Git / GitHub |
+| Dashboard | React + Vite + TypeScript + Tailwind CSS |
+
+---
+
+## Features
+
+1. **Home Dashboard** — live AQI, category, last-updated time
+2. **3-Day Forecast** — day cards, chart and table views, hourly breakdown
+3. **Weather Information** — temperature, humidity, wind speed, pressure
+4. **Historical AQI Trends** — interactive chart, filterable by 7 / 30 / 90 days
+5. **Alerts** — color-coded AQI status, inline hazard warning banners, alert drawer
+6. **Model Explanation** — real SHAP feature-importance breakdown per forecast day
+7. **Model Performance** — RMSE / MAE / R² per model, last-trained date
+8. **Extras** — hourly auto-refresh, CSV export of the 3-day forecast, responsive layout
+
+### Live-reading data quality
+
+The AQICN ground station for Karachi only reports a PM2.5 sensor and updates
+on a multi-hour cycle, which previously caused two problems: missing
+pollutant values reported as "0" instead of "no data," and repeated identical
+hourly readings that would have taught the model a false flat pattern. Both
+are addressed by making **Open-Meteo the primary source** for both live
+readings and historical backfill (it has real values for all six pollutants
+and updates hourly), with AQICN kept only as a secondary cross-check/fallback
+and a staleness check that flags repeated identical readings.
+
+---
 
 ## Prerequisites
 
-- Node.js 18+
 - Python 3.10+
-- Free API keys: [AQICN token](https://aqicn.org/data-platform/token/), [OpenWeather key](https://openweathermap.org/api)
-- (Optional) [Gemini API key](https://aistudio.google.com/apikey) for the AI health-advisor text
-- (Optional) [Hopsworks account](https://app.hopsworks.ai) for a real cloud feature store — otherwise a local parquet fallback is used automatically
+- Node.js 18+
+- Free API keys: [AQICN token](https://aqicn.org/data-platform/token/),
+  [OpenWeather key](https://openweathermap.org/api) (Open-Meteo needs no key)
+- Optional: a [Hopsworks](https://app.hopsworks.ai) account for a real cloud
+  feature store — otherwise a local parquet fallback is used automatically
 
-## 1. Set up the Python backend (does the real ML work)
+## 1. Set up the backend
 
 ```bash
 cd python-backend
@@ -55,89 +95,269 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# edit .env: paste AQICN_TOKEN, OPENWEATHER_API_KEY, set CITY_NAME/LATITUDE/LONGITUDE
+# edit .env: AQICN_TOKEN, OPENWEATHER_API_KEY, CITY_NAME/LATITUDE/LONGITUDE,
+# and (optional) HOPSWORKS_API_KEY / HOPSWORKS_PROJECT_NAME
 ```
 
-Build the training dataset and train the models (one-time):
+Build the training dataset and train the models:
 ```bash
-python -m src.backfill --days 90
+python -m src.backfill --days 730
 python -m src.train_pipeline
 ```
 
-Run the hourly feature pipeline once (so "now" has a live data point):
+Ingest one live hourly reading and start the API:
 ```bash
 python -m src.feature_pipeline
-```
-
-Start the Flask API:
-```bash
 python app/flask_api.py
-# -> running on http://127.0.0.1:5001
+# -> http://127.0.0.1:5001
 ```
 
-Verify everything is wired correctly before touching the frontend:
+Verify everything end to end before touching the frontend:
 ```bash
 python tests/test_flask_api.py
 ```
 
-## 2. Set up the React frontend (in a second terminal)
+## 2. Set up the frontend (separate terminal)
 
 ```bash
-cd ..   # back to the project root
+cd frontend
 npm install
-
-cp .env.example .env
-# edit .env: paste your GEMINI_API_KEY (optional but enables AI health advice)
-```
-
-Start the dev server:
-```bash
 npm run dev
+# -> http://localhost:3000
 ```
-Open **http://localhost:3000** — the dashboard talks to Flask on port 5001 automatically
-(`FLASK_API_URL` in `.env`, defaults to `http://127.0.0.1:5001`).
 
-## Important: which city has a trained model?
+Vite's dev server proxies every `/api/*` request straight to the Flask
+backend on port 5001 (see `frontend/vite.config.ts`) — no extra server layer
+in between.
 
-The Python backend is backfilled + trained for **one** city at a time (whatever you
-set as `CITY_NAME` in `python-backend/.env`, e.g. `karachi`). The dashboard lets you
-switch between all 8 Pakistani cities:
+## 3. Automating it
 
-- **Selected city == trained city** → you get real custom ML forecasts (RF/Ridge/LSTM)
-  and real SHAP explanations.
-- **Any other city** → current AQI is still live (AQICN/OpenWeather work for any city),
-  and the 3-day forecast automatically falls back to OpenWeather's own real 4-day
-  air-pollution forecast API (still 100% real data, just not our custom-trained model).
-  SHAP is unavailable for these cities until you backfill + train for them too.
+`python-backend/.github/workflows/` contains three GitHub Actions workflows:
 
-To get custom-trained models for another city, change `CITY_NAME`/`LATITUDE`/`LONGITUDE`
-in `python-backend/.env` and re-run `backfill` + `train_pipeline` for that city (note:
-this replaces the currently trained city's models — training multiple cities
-simultaneously would need separate Hopsworks feature groups per city, left as a
-future extension).
+- **Hourly Feature Pipeline** — runs every hour, ingests one live reading
+- **Daily Training Pipeline** — runs once a day, retrains all models
+- **Manual Backfill** — triggered on demand from the Actions tab, rebuilds
+  the historical training dataset
 
-## Automating it (GitHub Actions)
+Configure the same `.env` values as repository Secrets (API keys) and
+Variables (city/location/project name) in GitHub, and they run on their own
+schedule without any local machine needing to be on.
 
-See `python-backend/.github/workflows/` — hourly feature pipeline, daily training,
-and a manual on-demand backfill workflow are all included. Configure the same
-`.env` values as GitHub Secrets/Variables (see `python-backend/README.md` for the
-exact split between Secrets vs Variables).
+---
 
 ## Project structure
 
 ```
-├── src/                    # React frontend
-│   ├── App.tsx
-│   ├── components/         # dashboard views (forecast, SHAP, feature store, model registry, pipelines)
-│   └── server/geminiService.ts
-├── server.ts                # Node/Express - serves UI + proxies /api/* to Flask
-├── python-backend/          # REAL ML backend (see python-backend/README.md for full detail)
-│   ├── app/flask_api.py     # REST API consumed by server.ts
-│   ├── src/                 # api_client, feature engineering, training, SHAP, alerts
+├── python-backend/
+│   ├── app/flask_api.py          # REST API consumed by the frontend
+│   ├── src/
+│   │   ├── api_client.py          # AQICN / OpenWeather / Open-Meteo clients
+│   │   ├── feature_engineering.py  # time, lag, rolling, derived features
+│   │   ├── feature_store.py         # Hopsworks (or local parquet fallback)
+│   │   ├── feature_pipeline.py       # hourly ingestion job
+│   │   ├── backfill.py                # historical backfill job
+│   │   ├── train_pipeline.py           # RF / Ridge / LSTM training + evaluation
+│   │   ├── model_registry.py            # model storage + active-model switching
+│   │   ├── predict.py                    # 3-day inference
+│   │   ├── shap_explain.py                # SHAP feature importance
+│   │   ├── alerts.py                       # hazardous AQI email/Slack alerts
+│   │   ├── eda.py                           # exploratory data analysis helpers
+│   │   └── run_logger.py                     # pipeline run history
 │   ├── tests/test_flask_api.py
-│   └── .github/workflows/   # hourly/daily/manual automation
-└── package.json
+│   └── .github/workflows/                    # hourly / daily / manual automation
+└── frontend/
+    ├── vite.config.ts                # dev proxy -> Flask backend
+    └── src/
+        ├── App.tsx                    # top-level state + data orchestration
+        ├── api.ts                      # all backend calls, centralized
+        ├── types.ts                     # types matching the Flask JSON responses
+        └── components/                   # Header, forecast, feature store, model
+                                            # registry, SHAP, alerts, historical trends
 ```
 
-For deep detail on the Python side (feature engineering, model training, SHAP,
-Hopsworks setup, automation), see **`python-backend/README.md`**.
+---
+
+## API Reference
+
+Base URL: `http://127.0.0.1:5001` (proxied through the frontend at `/api/*`).
+All responses are JSON. Endpoints marked **POST** trigger a background job and
+return immediately — re-fetch the related **GET** endpoint after a short
+delay to see the result.
+
+### Health
+
+**`GET /api/health`**
+```json
+{ "status": "ok", "city": "karachi", "hopsworks": true }
+```
+
+### Current AQI
+
+**`GET /api/aqi/current?city=Karachi&lat=24.8607&lon=67.0011&country=Pakistan`**
+
+Primary source: Open-Meteo (all six pollutants). Falls back to AQICN +
+OpenWeather if Open-Meteo is unavailable.
+
+```json
+{
+  "city": "Karachi", "country": "Pakistan", "latitude": 24.8607, "longitude": 67.0011,
+  "aqi": 92, "category": "Moderate", "primaryPollutant": "pm25",
+  "timestamp": "2026-08-08T12:00:00+00:00",
+  "pollutants": { "pm25": 42.0, "pm10": 58.0, "o3": 55, "no2": 18, "so2": 9, "co": 310 },
+  "weather": { "temperature": 30.5, "humidity": 50, "windSpeed": 6.5, "windDirection": "SSW", "pressure": 1009, "precipitation": 0 }
+}
+```
+`502` if both Open-Meteo and AQICN fail.
+
+### 3-day forecast
+
+**`GET /api/aqi/forecast?city=Karachi&lat=24.8607&lon=67.0011`**
+
+Uses the trained Random Forest / Ridge / LSTM model for the configured city;
+falls back to OpenWeather's real forecast API for any other city with no
+custom-trained model.
+
+```json
+{
+  "forecast": [
+    {
+      "date": "2026-08-09", "displayDate": "Tomorrow (Aug 9)", "dayOfWeek": "Sunday",
+      "avgAQI": 88.4, "minAQI": 60, "maxAQI": 120, "category": "Moderate", "primaryPollutant": "pm25",
+      "hourly": [
+        {
+          "time": "00:00", "fullTimestamp": "2026-08-09T00:00:00+00:00",
+          "aqi": 75.2, "category": "Moderate", "pm25": 31.6, "pm10": 54.1,
+          "temp": null, "humidity": null, "windSpeed": null,
+          "confidenceLower": 67.2, "confidenceUpper": 83.2
+        }
+      ]
+    }
+  ],
+  "modelTrained": true,
+  "note": null
+}
+```
+
+### SHAP explanation
+
+**`GET /api/aqi/shap?city=Karachi&dayOffset=1`** (`dayOffset`: 1, 2, or 3)
+
+```json
+{
+  "dayOffset": 1, "date": "2026-08-09", "predictedAQI": 92.1, "baseAQI": 95,
+  "features": [
+    {
+      "feature": "aqi_lag_24h", "displayName": "24-Hour Prior AQI (Lag 24)",
+      "value": 12.4, "shapValue": 12.4, "impact": "increases_aqi",
+      "explanation": "Real SHAP mean |impact| of 12.4 AQI points on the 24h forecast, computed via random_forest model."
+    }
+  ],
+  "modelTrained": true
+}
+```
+`404` if no model is trained for the requested city:
+```json
+{ "error": "No custom-trained model for 'X'. ...", "modelTrained": false }
+```
+
+### Historical trends
+
+**`GET /api/aqi/history?days=30`**
+```json
+{
+  "days": 30,
+  "points": [
+    { "timestamp": "2026-07-09T00:00:00+00:00", "aqi": 88.2, "pm25": 40.1, "pm10": 55.0 }
+  ],
+  "count": 720
+}
+```
+
+### Feature store
+
+**`GET /api/feature-store`**
+```json
+{
+  "featureViews": [
+    {
+      "name": "aqi_features", "version": 2, "entity": "karachi",
+      "features": ["pm25", "pm10", "hour", "aqi_lag_1h", "..."],
+      "onlineStoreEnabled": true, "ttlDays": 90,
+      "recordCount": 16963, "lastIngested": "2026-08-08T12:00:00+00:00"
+    }
+  ],
+  "sampleRecords": [
+    {
+      "featureId": "feat-karachi-1735732800", "entityId": "karachi",
+      "timestamp": "2026-08-08T12:00:00+00:00", "hour": 12, "dayOfWeek": 2, "month": 8,
+      "temp": 30.5, "humidity": 50, "windSpeed": 1.8, "pressure": 1009,
+      "aqiLag1h": 90.1, "aqiLag24h": 88.4, "aqiChangeRate": 1.2,
+      "pm25Ratio": 0.7, "windDispersionIndex": 0.36,
+      "targetAQI24h": 92.1, "targetAQI48h": 85.0, "targetAQI72h": 80.2
+    }
+  ],
+  "totalRecords": 16963,
+  "backend": "Hopsworks"
+}
+```
+
+**`POST /api/feature-store/backfill`** — body `{ "days": 730 }`
+```json
+{ "success": true, "message": "Backfill for 730 days started in the background." }
+```
+
+### Model registry
+
+**`GET /api/model-registry`** — one entry per (candidate model × horizon)
+```json
+[
+  {
+    "modelId": "random_forest-24h", "name": "Random Forest Regressor (24h horizon)",
+    "type": "Random Forest Regressor", "version": "1.0.0", "trainDate": "2026-08-08T03:00:00+00:00",
+    "metrics": { "rmse": 12.4, "mae": 9.1, "r2": 0.81, "trainingTimeMs": 0 },
+    "hyperparameters": {}, "featureImportances": [], "active": true
+  }
+]
+```
+`modelId` is always `{candidate}-{horizon}`, horizon is `24h`, `48h`, or `72h`.
+
+**`POST /api/model-registry/train`** — body `{}`
+```json
+{ "success": true, "message": "Training pipeline started in the background." }
+```
+
+**`POST /api/model-registry/set-active`** — body `{ "modelId": "ridge-24h" }`
+
+Returns the full updated array (same shape as `GET /api/model-registry`) on
+success, or `404` if the candidate/horizon doesn't exist:
+```json
+{ "error": "Candidate 'ridge' for horizon '24h' was not found. It must have been trained first (run train_pipeline)." }
+```
+
+### Pipeline runs
+
+**`GET /api/pipeline/runs`** — most recent 50 pipeline runs
+```json
+[
+  {
+    "id": "run-a1b2c3d4", "name": "Hourly Weather & Pollutant Ingestion",
+    "type": "feature_ingestion", "status": "success",
+    "startTime": "2026-08-08T12:00:00+00:00", "durationSeconds": 4.2,
+    "recordsProcessed": 1, "triggeredBy": "scheduler",
+    "logs": ["Started: Hourly Weather & Pollutant Ingestion", "Fetched live reading: AQI=92 at 2026-08-08 12:00:00+00:00", "Finished with status=success in 4.2s"]
+  }
+]
+```
+
+**`POST /api/pipeline/trigger`** — body `{ "type": "feature_ingestion" }` or `{ "type": "model_training" }`
+```json
+{ "success": true, "message": "Pipeline 'feature_ingestion' started in the background." }
+```
+
+---
+
+- The feature group currently in use is `aqi_features` version 2 in Hopsworks
+  (`python-backend/config.py` → `FEATURE_GROUP_VERSION`). Earlier versions
+  are left in place as a safety net rather than deleted.
+- If a value can't be verified from a real API response, the UI shows an
+  explicit empty state rather than a placeholder number.

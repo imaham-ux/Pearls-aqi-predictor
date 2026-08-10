@@ -15,28 +15,13 @@ A clean, from-scratch React dashboard for the Pearls AQI Predictor, built for
 7. **Model Performance** — RMSE / MAE / R² per model, last training date
 8. **Extras** — hourly auto-refresh, CSV export of the 3-day forecast, fully responsive
 
-No AI/Gemini/assistant features anywhere — this is a pure data dashboard.
-
-## ⚠️ One small backend addition required
-
-The "Historical AQI Trends" feature needs a new **read-only** endpoint that
-doesn't exist in your current `python-backend` yet. See
-`ADD_TO_flask_api.txt` in this delivery — it's a two-part, purely additive
-patch (one import line + one new `@app.route` function). Nothing existing is
-changed or removed.
-
-## 1. Apply the backend patch (one-time)
-
-Open `python-backend/app/flask_api.py` and apply the two edits described in
-`ADD_TO_flask_api.txt`.
-
-## 2. Install frontend dependencies
+## 1. Install frontend dependencies
 
 ```bash
 npm install
 ```
 
-## 3. Run the Python backend first (separate terminal)
+## 2. Run the Python backend first (separate terminal)
 
 ```bash
 cd ../python-backend
@@ -44,7 +29,7 @@ python app/flask_api.py
 # -> http://127.0.0.1:5001
 ```
 
-## 4. Run the frontend
+## 3. Run the frontend
 
 ```bash
 npm run dev
@@ -57,7 +42,7 @@ If your Flask backend runs somewhere other than `http://127.0.0.1:5001`:
 VITE_FLASK_API_URL=http://your-backend-host:5001 npm run dev
 ```
 
-## 5. Build for production
+## 4. Build for production
 
 ```bash
 npm run build
