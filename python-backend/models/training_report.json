@@ -1,155 +1,77 @@
 {
   "24h": {
-    "best_model": "lstm",
+    "best_model": "xgboost",
     "metrics": {
-      "rmse": 7.429,
-      "mae": 6.316,
-      "r2": 0.473
+      "rmse": 8.041341992260223,
+      "mae": 5.610777920888391,
+      "r2": 0.5103982409513025
     },
     "all_candidates": {
-      "random_forest": {
-        "rmse": 18.951,
-        "mae": 13.998,
-        "r2": -2.432
-      },
       "ridge": {
-        "rmse": 9.803,
-        "mae": 7.527,
-        "r2": 0.082
+        "rmse": 8.134615485526973,
+        "mae": 5.691042490840836,
+        "r2": 0.49897434752692205
       },
-      "lstm": {
-        "rmse": 7.429,
-        "mae": 6.316,
-        "r2": 0.473
+      "random_forest": {
+        "rmse": 8.804655355119632,
+        "mae": 6.18106094744963,
+        "r2": 0.4130371352577942
+      },
+      "xgboost": {
+        "rmse": 8.041341992260223,
+        "mae": 5.610777920888391,
+        "r2": 0.5103982409513025
       }
-    },
-    "feature_cols": [
-      "pm25",
-      "pm10",
-      "o3",
-      "no2",
-      "so2",
-      "co",
-      "hour_sin",
-      "hour_cos",
-      "month_sin",
-      "month_cos",
-      "is_weekend",
-      "aqi_lag_1h",
-      "aqi_lag_3h",
-      "aqi_lag_6h",
-      "aqi_lag_12h",
-      "aqi_lag_24h",
-      "aqi_roll_mean_3h",
-      "aqi_roll_mean_6h",
-      "aqi_roll_mean_24h",
-      "aqi_roll_std_3h",
-      "aqi_roll_std_6h",
-      "aqi_roll_std_24h",
-      "aqi_change_rate",
-      "aqi_change_rate_pct"
-    ]
+    }
   },
   "48h": {
-    "best_model": "lstm",
+    "best_model": "ridge",
     "metrics": {
-      "rmse": 8.194,
-      "mae": 6.356,
-      "r2": 0.338
+      "rmse": 10.95171991431851,
+      "mae": 7.602568227628343,
+      "r2": 0.09579347962020068
     },
     "all_candidates": {
-      "random_forest": {
-        "rmse": 15.02,
-        "mae": 12.364,
-        "r2": -1.225
-      },
       "ridge": {
-        "rmse": 12.058,
-        "mae": 8.366,
-        "r2": -0.434
+        "rmse": 10.95171991431851,
+        "mae": 7.602568227628343,
+        "r2": 0.09579347962020068
       },
-      "lstm": {
-        "rmse": 8.194,
-        "mae": 6.356,
-        "r2": 0.338
+      "random_forest": {
+        "rmse": 12.366316407763257,
+        "mae": 9.04445761425101,
+        "r2": -0.15287888805224958
+      },
+      "xgboost": {
+        "rmse": 10.97760599070776,
+        "mae": 7.872469250592134,
+        "r2": 0.09151396525926991
       }
-    },
-    "feature_cols": [
-      "pm25",
-      "pm10",
-      "o3",
-      "no2",
-      "so2",
-      "co",
-      "hour_sin",
-      "hour_cos",
-      "month_sin",
-      "month_cos",
-      "is_weekend",
-      "aqi_lag_1h",
-      "aqi_lag_3h",
-      "aqi_lag_6h",
-      "aqi_lag_12h",
-      "aqi_lag_24h",
-      "aqi_roll_mean_3h",
-      "aqi_roll_mean_6h",
-      "aqi_roll_mean_24h",
-      "aqi_roll_std_3h",
-      "aqi_roll_std_6h",
-      "aqi_roll_std_24h",
-      "aqi_change_rate",
-      "aqi_change_rate_pct"
-    ]
+    }
   },
   "72h": {
-    "best_model": "lstm",
+    "best_model": "xgboost",
     "metrics": {
-      "rmse": 9.185,
-      "mae": 7.004,
-      "r2": 0.136
+      "rmse": 11.988111625274323,
+      "mae": 8.505697744564355,
+      "r2": -0.08606066637780652
     },
     "all_candidates": {
-      "random_forest": {
-        "rmse": 16.941,
-        "mae": 8.747,
-        "r2": -1.938
-      },
       "ridge": {
-        "rmse": 15.674,
-        "mae": 9.412,
-        "r2": -1.515
+        "rmse": 12.013457335632443,
+        "mae": 8.367938304117008,
+        "r2": -0.09065790057497192
       },
-      "lstm": {
-        "rmse": 9.185,
-        "mae": 7.004,
-        "r2": 0.136
+      "random_forest": {
+        "rmse": 13.051883743917085,
+        "mae": 9.906079580395545,
+        "r2": -0.287356773661003
+      },
+      "xgboost": {
+        "rmse": 11.988111625274323,
+        "mae": 8.505697744564355,
+        "r2": -0.08606066637780652
       }
-    },
-    "feature_cols": [
-      "pm25",
-      "pm10",
-      "o3",
-      "no2",
-      "so2",
-      "co",
-      "hour_sin",
-      "hour_cos",
-      "month_sin",
-      "month_cos",
-      "is_weekend",
-      "aqi_lag_1h",
-      "aqi_lag_3h",
-      "aqi_lag_6h",
-      "aqi_lag_12h",
-      "aqi_lag_24h",
-      "aqi_roll_mean_3h",
-      "aqi_roll_mean_6h",
-      "aqi_roll_mean_24h",
-      "aqi_roll_std_3h",
-      "aqi_roll_std_6h",
-      "aqi_roll_std_24h",
-      "aqi_change_rate",
-      "aqi_change_rate_pct"
-    ]
+    }
   }
 }

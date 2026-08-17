@@ -79,5 +79,271 @@
       "Wrote 17520 feature rows to feature store",
       "Finished with status=success in 57.05s"
     ]
+  },
+  {
+    "id": "run-948d5fd7",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "success",
+    "startTime": "2026-08-10T19:48:32.409660+00:00",
+    "durationSeconds": 517.29,
+    "recordsProcessed": 17592,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job",
+      "Trained on 17592 feature rows",
+      "24h: best=lstm rmse=9.834",
+      "48h: best=ridge rmse=13.13",
+      "72h: best=lstm rmse=14.107",
+      "Finished with status=success in 517.29s"
+    ]
+  },
+  {
+    "id": "run-4d456f6d",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "success",
+    "startTime": "2026-08-10T19:48:41.847552+00:00",
+    "durationSeconds": 400.38,
+    "recordsProcessed": 17592,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job",
+      "Trained on 17592 feature rows",
+      "24h: best=lstm rmse=9.936",
+      "48h: best=ridge rmse=13.13",
+      "72h: best=ridge rmse=14.198",
+      "Finished with status=success in 400.38s"
+    ]
+  },
+  {
+    "id": "run-9503a873",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:56:00.118934+00:00",
+    "_start_perf": 3535.4220221,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-e7ec47b4",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:57:09.021775+00:00",
+    "_start_perf": 3604.3246803,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-cc0c4680",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:57:51.969658+00:00",
+    "_start_perf": 3647.2727366,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-ac6b6fbd",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:57:55.318416+00:00",
+    "_start_perf": 3650.6211496,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-575970a2",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:59:01.533693+00:00",
+    "_start_perf": 3716.8366962,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-73fd597e",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:59:23.311953+00:00",
+    "_start_perf": 3738.6148134,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-b666abfa",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:59:24.988121+00:00",
+    "_start_perf": 3740.2914188,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-ecfc143c",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:59:26.235568+00:00",
+    "_start_perf": 3741.5391795,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-cb9d42c5",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T19:59:58.375019+00:00",
+    "_start_perf": 3773.6782625,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-1ae9315c",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T20:00:48.604709+00:00",
+    "_start_perf": 3823.9082715,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-d8bc933b",
+    "name": "Daily Automated Model Training Job",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-10T20:01:45.488837+00:00",
+    "_start_perf": 3880.7920499,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "Web Dashboard Model Playground",
+    "logs": [
+      "Started: Daily Automated Model Training Job"
+    ]
+  },
+  {
+    "id": "run-7aa66f21",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-17T16:00:01.285264+00:00",
+    "_start_perf": 9962.0503952,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)"
+    ]
+  },
+  {
+    "id": "run-1781e492",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "success",
+    "startTime": "2026-08-17T16:22:47.158095+00:00",
+    "durationSeconds": 245.01,
+    "recordsProcessed": 17711,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)",
+      "Trained 3 horizons x 3 algorithms",
+      "Best models: {'24h': 'xgboost', '48h': 'ridge', '72h': 'xgboost'}",
+      "Finished with status=success in 245.01s"
+    ]
+  },
+  {
+    "id": "run-e1458d2c",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "success",
+    "startTime": "2026-08-17T16:38:38.654835+00:00",
+    "durationSeconds": 257.48,
+    "recordsProcessed": 17711,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)",
+      "Trained 3 horizons x 3 algorithms",
+      "Best models: {'24h': 'xgboost', '48h': 'ridge', '72h': 'xgboost'}",
+      "Finished with status=success in 257.48s"
+    ]
+  },
+  {
+    "id": "run-730b6580",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-17T16:49:03.485159+00:00",
+    "_start_perf": 12904.2510805,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)"
+    ]
+  },
+  {
+    "id": "run-f370cd75",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "success",
+    "startTime": "2026-08-17T16:55:54.132879+00:00",
+    "durationSeconds": 292.69,
+    "recordsProcessed": 17712,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)",
+      "Trained 3 horizons x 3 algorithms",
+      "Best models: {'24h': 'xgboost', '48h': 'ridge', '72h': 'xgboost'}",
+      "Finished with status=success in 292.69s"
+    ]
   }
 ]
