@@ -58,17 +58,18 @@ def _with_retries(func, *args, retries=4, base_delay=5, label="Hopsworks call", 
     raise last_exc
 
 
-# Measurement / sensor columns that Hopsworks stores as 'double'.
-# If an API happens to return a whole number (e.g. AQI "70" instead of
-# "70.0"), pandas reads the column as int64 and the Hopsworks insert fails
-# with:
+# Measurement / sensor columns that Hopsworks stores as `double` in the
+# schema created by the original backfill. If an API returns a whole
+# number (e.g. AQI "70" instead of "70.0"), pandas reads the column as
+# int64 and the Hopsworks insert fails with:
 #   "aqi (expected type: 'double', derived from input: 'int') has the wrong type."
-# Forcing these to float64 makes every insert path (backfill, hourly feature
-# pipeline, manual) type-match the established feature-group schema.
+# Only used as a FALLBACK when the live Hopsworks schema cannot be read -
+# normal inserts adapt to the ACTUAL feature-group schema (which is
+# authoritative and wins over this static list).
 DOUBLE_COLUMNS = {
     "aqi", "pm25", "pm10", "o3", "no2", "so2", "co",
-    "temp", "humidity", "pressure", "wind_speed", "clouds",
-    # AQI-derived / rolling / lag / change features are all floats too
+    "temp", "pressure", "wind_speed",
+    # AQI-derived / rolling / lag / change features are all floats
     "aqi_lag_1h", "aqi_lag_3h", "aqi_lag_6h", "aqi_lag_12h", "aqi_lag_24h",
     "aqi_roll_mean_3h", "aqi_roll_mean_6h", "aqi_roll_mean_24h",
     "aqi_roll_std_3h", "aqi_roll_std_6h", "aqi_roll_std_24h",
@@ -78,21 +79,44 @@ DOUBLE_COLUMNS = {
 }
 
 
-def _coerce_dtypes_for_hopsworks(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalise dtypes so inserts always match the Hopsworks feature-group
-    schema:
+def _coerce_dtypes_for_hopsworks(
+    df: pd.DataFrame,
+    expected_types: dict = None,
+) -> pd.DataFrame:
+    """Coerce each column's dtype to EXACTLY what the Hopsworks feature-group
+    schema expects - this is the canonical fix for every CI failure like:
 
-      1. Sensor / measurement columns -> float64 ('double' in Hopsworks).
-         This is the critical fix for the CI failure:
-         "aqi (expected type: 'double', derived from input: 'int')".
-      2. Genuinely integer columns (hour, day, month, weekday, is_weekend,
-         low_wind_flag, ...) -> int32 ('int' in Hopsworks), because pandas'
-         default int64 ('bigint') also triggers schema-mismatch errors.
+        "aqi (expected type: 'double', derived from input: 'int')"
+        "humidity (expected type: 'int', derived from input: 'double')"
+
+    `expected_types` is `{col_name_lower: 'int'|'bigint'|'double'|...}` read
+    from the live feature-group schema. When a column is NOT present in that
+    schema (or schema is unavailable) we fall back to:
+
+      - DOUBLE_COLUMNS (sensor/derived measurements) -> float64 ('double')
+      - any other int64 column                          -> int32  ('int')
     """
     df = df.copy()
 
     for col in df.columns:
-        if col in DOUBLE_COLUMNS:
+        expected = None
+        if expected_types:
+            expected = expected_types.get(col.lower())
+
+        if expected is not None:
+            if any(k in expected for k in ("double", "float", "decimal")):
+                df[col] = df[col].astype("float64")
+            elif any(k in expected for k in ("bigint",)):
+                df[col] = df[col].astype("int64")
+            elif any(k in expected for k in ("int", "smallint", "integer")):
+                # NaN can't live in int32, so fall back to float64 if the
+                # row actually carries NaN (still type-safe for Hopsworks,
+                # which accepts the value as double).
+                try:
+                    df[col] = df[col].astype("int32")
+                except (ValueError, TypeError):
+                    df[col] = df[col].astype("float64")
+        elif col in DOUBLE_COLUMNS:
             df[col] = df[col].astype("float64")
         elif df[col].dtype == "int64":
             df[col] = df[col].astype("int32")
@@ -165,9 +189,32 @@ class HopsworksFeatureStore:
                 f"Hopsworks returned no Feature Group object for '{config.FEATURE_GROUP_NAME}'. "
                 f"This usually means the feature group has never been created with real data yet. "
                 f"Fix: run `python -m src.backfill --days 730` (or trigger the 'Manual Backfill' "
-                f"GitHub Actions workflow) at least once BEFORE running the hourly feature pipeline, "
-                f"so the feature group is created and populated with its first rows."
+                f"GitHub Actions workflow) at least once BEFORE running the hourly feature "
+                f"pipeline, so the feature group is created and populated with its first rows."
             )
+
+        # Build the canonical column-name -> Hopsworks-type map from the LIVE
+        # feature-group schema. This is the authoritative source of truth for
+        # our insert-time dtype coercion - it guarantees we never send an int
+        # where Hopsworks expects a double (and vice-versa), regardless of how
+        # the backfill originally created the schema.
+        try:
+            self._expected_types = {
+                f.name.lower(): str(f.type).lower()
+                for f in self.fg.features  # hsfs Feature objects carry .name and .type
+            }
+            logger.info(
+                "Feature-group schema loaded (%d features): %s",
+                len(self._expected_types),
+                {k: v for k, v in list(self._expected_types.items())[:8]},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Could not read feature-group schema for '%s' (%s) - "
+                "falling back to static dtype coercion.",
+                config.FEATURE_GROUP_NAME, e,
+            )
+            self._expected_types = None
 
         # A feature group that was JUST created (or just had its version bumped)
         # may need a brief moment for its underlying Delta table storage to be
@@ -182,7 +229,10 @@ class HopsworksFeatureStore:
         # when the runner shuts down, giving a false "success" while the real
         # feature group stays empty forever. So: retry hard, and if it still
         # fails, raise loudly.
-        df = _coerce_dtypes_for_hopsworks(df)
+        df = _coerce_dtypes_for_hopsworks(
+            df,
+            expected_types=getattr(self, "_expected_types", None),
+        )
 
         # Large single commits (e.g. a 730-day backfill = ~17k rows in one insert,
         # especially right after the feature group is first created) appear to
