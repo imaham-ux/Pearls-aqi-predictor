@@ -99,20 +99,25 @@ def fetch_current_raw_row(history: pd.DataFrame = None) -> dict:
 
     logger.info("Live reading source for this hour: %s (AQI=%.1f)", source, aqi)
 
+    # IMPORTANT: cast every measurement to float here. Hopsworks stores these
+    # columns as 'double'. If an API happens to return a whole number (e.g.
+    # AQI "70" instead of "70.0"), pandas keeps the column as int and the
+    # feature-store insert fails with:
+    #   "aqi (expected type: 'double', derived from input: 'int') has the wrong type."
     row = {
         "datetime": datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0),
-        "aqi": aqi,
-        "pm25": pm25,
-        "pm10": pm10,
-        "o3": o3,
-        "no2": no2,
-        "so2": so2,
-        "co": co,
-        "temp": temp,
-        "humidity": humidity,
-        "pressure": pressure,
-        "wind_speed": wind_speed,
-        "clouds": clouds,
+        "aqi": float(aqi) if aqi is not None else None,
+        "pm25": float(pm25) if pm25 is not None else None,
+        "pm10": float(pm10) if pm10 is not None else None,
+        "o3": float(o3) if o3 is not None else None,
+        "no2": float(no2) if no2 is not None else None,
+        "so2": float(so2) if so2 is not None else None,
+        "co": float(co) if co is not None else None,
+        "temp": float(temp) if temp is not None else None,
+        "humidity": float(humidity) if humidity is not None else None,
+        "pressure": float(pressure) if pressure is not None else None,
+        "wind_speed": float(wind_speed) if wind_speed is not None else None,
+        "clouds": float(clouds) if clouds is not None else None,
         "city": config.CITY_NAME,
     }
     return row

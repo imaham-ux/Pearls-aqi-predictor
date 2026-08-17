@@ -58,15 +58,45 @@ def _with_retries(func, *args, retries=4, base_delay=5, label="Hopsworks call", 
     raise last_exc
 
 
+# Measurement / sensor columns that Hopsworks stores as 'double'.
+# If an API happens to return a whole number (e.g. AQI "70" instead of
+# "70.0"), pandas reads the column as int64 and the Hopsworks insert fails
+# with:
+#   "aqi (expected type: 'double', derived from input: 'int') has the wrong type."
+# Forcing these to float64 makes every insert path (backfill, hourly feature
+# pipeline, manual) type-match the established feature-group schema.
+DOUBLE_COLUMNS = {
+    "aqi", "pm25", "pm10", "o3", "no2", "so2", "co",
+    "temp", "humidity", "pressure", "wind_speed", "clouds",
+    # AQI-derived / rolling / lag / change features are all floats too
+    "aqi_lag_1h", "aqi_lag_3h", "aqi_lag_6h", "aqi_lag_12h", "aqi_lag_24h",
+    "aqi_roll_mean_3h", "aqi_roll_mean_6h", "aqi_roll_mean_24h",
+    "aqi_roll_std_3h", "aqi_roll_std_6h", "aqi_roll_std_24h",
+    "aqi_change_rate", "aqi_change_rate_pct",
+    "hour_sin", "hour_cos", "month_sin", "month_cos",
+    "heat_humidity_index",
+}
+
+
 def _coerce_dtypes_for_hopsworks(df: pd.DataFrame) -> pd.DataFrame:
-    """Hopsworks feature groups commonly expect 32-bit 'int' for small integer
-    columns (hour, day, month, weekday, is_weekend, low_wind_flag, etc.), but
-    pandas' default integer dtype is int64 ('bigint'). This mismatch causes
-    'Features are not compatible with Feature Group schema' errors on insert.
-    Downcast any int64 column to int32 so it matches what Hopsworks expects."""
+    """Normalise dtypes so inserts always match the Hopsworks feature-group
+    schema:
+
+      1. Sensor / measurement columns -> float64 ('double' in Hopsworks).
+         This is the critical fix for the CI failure:
+         "aqi (expected type: 'double', derived from input: 'int')".
+      2. Genuinely integer columns (hour, day, month, weekday, is_weekend,
+         low_wind_flag, ...) -> int32 ('int' in Hopsworks), because pandas'
+         default int64 ('bigint') also triggers schema-mismatch errors.
+    """
     df = df.copy()
-    for col in df.select_dtypes(include=["int64"]).columns:
-        df[col] = df[col].astype("int32")
+
+    for col in df.columns:
+        if col in DOUBLE_COLUMNS:
+            df[col] = df[col].astype("float64")
+        elif df[col].dtype == "int64":
+            df[col] = df[col].astype("int32")
+
     return df
 
 
