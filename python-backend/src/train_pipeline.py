@@ -4,19 +4,23 @@ Training Pipeline
 1. Read the hourly features from the Feature Store
    (via src.feature_store.get_feature_store() - Hopsworks when configured,
     local parquet otherwise)
-2. Build targets for +24h, +48h and +72h
-3. Train three models for each horizon:
-      - Ridge Regression
-      - Random Forest
-      - XGBoost
-4. Evaluate models using RMSE, MAE and R2
-5. Select the best model per horizon based on RMSE
-6. Register the winning model in the Model Registry
+2. Drop rows that are part of a suspiciously flat AQI stretch (see
+   filter_stale_readings() below) before anything else touches the data
+3. Build targets for +24h, +48h and +72h
+4. For each horizon, tune and train three candidate models:
+      - Ridge Regression      (small alpha grid)
+      - Random Forest         (randomized search, time-series cross-validation)
+      - XGBoost               (randomized search, time-series cross-validation)
+5. Evaluate the tuned models using RMSE, MAE and R2 on the final held-out
+   time window, and log how each compares against the target quality gate
+   (R2 >= 0.7, RMSE <= 30, MAE <= 20)
+6. Select the best model per horizon based on RMSE
+7. Register the winning model in the Model Registry
    (local ./models, mirrored to Hopsworks when configured)
-7. Write training_report.json (used by the Flask dashboard)
+8. Write training_report.json (used by the Flask dashboard)
 
 Total training runs:
-    3 horizons x 3 algorithms = 9 models
+    3 horizons x 3 algorithms = 9 models (each tuned via cross-validation)
 
 NOTE - names used here must match the rest of the backend EXACTLY:
 
@@ -32,6 +36,12 @@ NOTE - names used here must match the rest of the backend EXACTLY:
   (imported by src/predict.py and src/shap_explain.py)
 * Public entry point: run(min_rows=..., triggered_by=...)
   (invoked by app/flask_api.py and the test suite)
+
+IMPORTANT: this file intentionally does NOT add any new feature-store
+columns. The feature *set* used for training is identical to before -
+only which rows are used (filter_stale_readings) and how the models are
+fit (hyperparameter search) changed. This keeps src/predict.py and
+src/shap_explain.py fully compatible with no changes required there.
 """
 
 import json
@@ -50,6 +60,7 @@ from sklearn.metrics import (
     mean_squared_error,
     r2_score,
 )
+from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -77,7 +88,6 @@ CITY_NAME = os.getenv("CITY_NAME", "karachi")
 # Number of most recent days used for testing
 TEST_DAYS = int(os.getenv("TEST_DAYS", "120"))
 
-
 # Forecast horizons (hourly matches back ic months: src/predict.py, app/flask_api.py)
 HORIZONS = ["24h", "48h", "72h"]
 HORIZON_HOURS = {"24h": 24, "48h": 48, "72h": 72}
@@ -89,7 +99,6 @@ DEFAULT_MIN_ROWS = 200
 FEATURE_GROUP_NAME = config.FEATURE_GROUP_NAME
 FEATURE_GROUP_VERSION = config.FEATURE_GROUP_VERSION
 
-
 # Columns that must NEVER be treated as model features (metadata / targets only)
 _FEATURE_EXCLUDE = {
     "datetime",
@@ -99,6 +108,23 @@ _FEATURE_EXCLUDE = {
     "aqi_next_72h",
     "wind_deg",   # populated only by some API sources
 }
+
+# How many consecutive identical hourly AQI readings count as "stale" and get
+# dropped before training. Matches the staleness lookback already used on the
+# ingestion side (src/feature_pipeline.py) - see project report, Section 7,
+# for the full story of why the Karachi ground station needed this guard.
+STALE_RUN_LENGTH = 3
+
+# Target quality gate, as agreed with the mentor. Runs are still registered
+# even when a horizon misses the gate (a partially-working model beats no
+# model), but every miss is logged clearly so it's never silently accepted.
+QUALITY_GATE = {"min_r2": 0.7, "max_rmse": 30.0, "max_mae": 20.0}
+
+# Hyperparameter search budget. Kept modest (small n_iter, few CV folds) so a
+# full 3-horizon x 2-tuned-algorithm run still finishes in a reasonable time
+# inside GitHub Actions.
+CV_FOLDS = 3
+SEARCH_ITER = 10
 
 
 # ============================================================
@@ -115,7 +141,10 @@ def get_available_features(df: pd.DataFrame) -> list:
 
     The exact same column set returned here is what training, prediction and
     SHAP all use, so a trained model is guaranteed to receive identical input
-    columns at serving time.
+    columns at serving time. Deliberately unchanged from before - the fix for
+    low accuracy lives in data quality and hyperparameter tuning, not in
+    adding new columns (which would require another Hopsworks schema
+    migration - see project report, Section 6).
     """
     return [c for c in df.columns if c not in _FEATURE_EXCLUDE]
 
@@ -160,6 +189,55 @@ def fetch_hourly_dataset(store=None) -> pd.DataFrame:
         df = df[df["city"] == CITY_NAME].reset_index(drop=True)
 
     logger.info("Loaded %d hourly rows for %s", len(df), CITY_NAME)
+    return df
+
+
+def filter_stale_readings(df: pd.DataFrame, target_col: str = "aqi",
+                           run_length: int = STALE_RUN_LENGTH) -> pd.DataFrame:
+    """
+    Data-quality guard: drops rows that sit inside a stretch of `run_length`
+    or more consecutive, exactly-identical AQI readings.
+
+    This matters because part of this project's history involved a ground
+    station (AQICN) that only refreshed on a multi-hour cycle, which meant a
+    single real reading could end up logged as several "fresh" hourly rows in
+    a row - a stale run that would otherwise teach the model a flat pattern
+    that never really happened. The ingestion side was fixed to stop this
+    going forward (see project report, Section 7), but older rows already
+    sitting in the feature store can still carry the pattern, so this guard
+    catches it at training time too. The first reading of every stretch is
+    always kept - only the repeated duplicates after it are dropped.
+    """
+    if df.empty:
+        return df
+
+    df = df.sort_values("datetime").reset_index(drop=True)
+    values = df[target_col].to_numpy()
+    n = len(values)
+    drop_positions = []
+    run_start = 0
+
+    for i in range(1, n):
+        same = values[i] == values[i - 1]
+        if not same or i == n - 1:
+            run_end = i if not same else i + 1
+            length = run_end - run_start
+            if length >= run_length:
+                drop_positions.extend(range(run_start + 1, run_end))
+            run_start = i
+
+    if drop_positions:
+        pct = 100 * len(drop_positions) / n
+        logger.warning(
+            "Dropping %d of %d rows (%.1f%%) that sit inside a stale AQI "
+            "stretch (%d+ identical consecutive hourly readings) before "
+            "training - see project report, Section 7.",
+            len(drop_positions), n, pct, run_length,
+        )
+        df = df.drop(index=drop_positions).reset_index(drop=True)
+    else:
+        logger.info("No stale AQI stretches found - nothing dropped.")
+
     return df
 
 
@@ -259,45 +337,91 @@ def evaluate(y_true, y_pred) -> dict:
     }
 
 
+def _check_quality_gate(horizon: str, metrics: dict) -> None:
+    """Logs a clear pass/warn line against the mentor-agreed target metrics.
+    Never blocks registration - a working-but-imperfect model still beats no
+    model at all - but a miss is always visible in the logs, never silent."""
+    misses = []
+    if metrics["r2"] < QUALITY_GATE["min_r2"]:
+        misses.append(f"R2 {metrics['r2']:.3f} < {QUALITY_GATE['min_r2']}")
+    if metrics["rmse"] > QUALITY_GATE["max_rmse"]:
+        misses.append(f"RMSE {metrics['rmse']:.2f} > {QUALITY_GATE['max_rmse']}")
+    if metrics["mae"] > QUALITY_GATE["max_mae"]:
+        misses.append(f"MAE {metrics['mae']:.2f} > {QUALITY_GATE['max_mae']}")
+
+    if misses:
+        logger.warning("Quality gate MISSED for horizon %s: %s", horizon, "; ".join(misses))
+    else:
+        logger.info("Quality gate PASSED for horizon %s (R2=%.3f, RMSE=%.2f, MAE=%.2f)",
+                    horizon, metrics["r2"], metrics["rmse"], metrics["mae"])
+
+
 # ============================================================
-# 6. CANDIDATE MODELS
+# 6. CANDIDATE MODELS + HYPERPARAMETER SEARCH SPACES
 # ============================================================
 
-def get_candidate_models() -> dict:
-    return {
+_RIDGE_ALPHAS = [0.1, 0.5, 1.0, 5.0, 10.0, 50.0]
 
-        "ridge": Pipeline([
-            (
-                "scaler",
-                StandardScaler(),
-            ),
-            (
-                "model",
-                Ridge(alpha=1.0),
-            ),
-        ]),
+_RF_PARAM_DIST = {
+    "n_estimators": [200, 300, 400, 500],
+    "max_depth": [8, 12, 16, 20, None],
+    "min_samples_leaf": [1, 2, 4, 8],
+    "max_features": ["sqrt", 0.5, 0.8, None],
+}
 
-        "random_forest":
-            RandomForestRegressor(
-                n_estimators=300,
-                max_depth=12,
-                min_samples_leaf=2,
-                random_state=42,
-                n_jobs=-1,
-            ),
+_XGB_PARAM_DIST = {
+    "n_estimators": [200, 300, 400, 500, 700],
+    "max_depth": [3, 4, 5, 6, 7],
+    "learning_rate": [0.01, 0.02, 0.03, 0.05, 0.08, 0.1],
+    "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
+    "colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
+    "reg_lambda": [0.5, 1.0, 2.0, 5.0],
+}
 
-        "xgboost":
-            XGBRegressor(
-                n_estimators=300,
-                max_depth=5,
-                learning_rate=0.03,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_lambda=1.0,
-                random_state=42,
-                n_jobs=-1,
-            ),
-    }
+
+def _tune_ridge(X_train, y_train, cv):
+    """Small enough search space to just grid it directly rather than pull in
+    RandomizedSearchCV machinery for one hyperparameter."""
+    best_alpha, best_score = _RIDGE_ALPHAS[0], -np.inf
+    for alpha in _RIDGE_ALPHAS:
+        pipe = Pipeline([("scaler", StandardScaler()), ("model", Ridge(alpha=alpha))])
+        scores = []
+        for train_idx, val_idx in cv.split(X_train):
+            pipe.fit(X_train.iloc[train_idx], y_train.iloc[train_idx])
+            pred = pipe.predict(X_train.iloc[val_idx])
+            scores.append(-np.sqrt(mean_squared_error(y_train.iloc[val_idx], pred)))
+        mean_score = float(np.mean(scores))
+        if mean_score > best_score:
+            best_score, best_alpha = mean_score, alpha
+
+    logger.info("Ridge CV search -> best alpha=%s (CV RMSE=%.2f)", best_alpha, -best_score)
+    final = Pipeline([("scaler", StandardScaler()), ("model", Ridge(alpha=best_alpha))])
+    final.fit(X_train, y_train)
+    return final
+
+
+def _tune_random_forest(X_train, y_train, cv):
+    base = RandomForestRegressor(random_state=42, n_jobs=-1)
+    search = RandomizedSearchCV(
+        base, _RF_PARAM_DIST, n_iter=SEARCH_ITER, cv=cv,
+        scoring="neg_root_mean_squared_error", random_state=42, n_jobs=-1,
+    )
+    search.fit(X_train, y_train)
+    logger.info("Random Forest CV search -> best params=%s (CV RMSE=%.2f)",
+                search.best_params_, -search.best_score_)
+    return search.best_estimator_
+
+
+def _tune_xgboost(X_train, y_train, cv):
+    base = XGBRegressor(random_state=42, n_jobs=-1)
+    search = RandomizedSearchCV(
+        base, _XGB_PARAM_DIST, n_iter=SEARCH_ITER, cv=cv,
+        scoring="neg_root_mean_squared_error", random_state=42, n_jobs=-1,
+    )
+    search.fit(X_train, y_train)
+    logger.info("XGBoost CV search -> best params=%s (CV RMSE=%.2f)",
+                search.best_params_, -search.best_score_)
+    return search.best_estimator_
 
 
 # ============================================================
@@ -312,42 +436,42 @@ def train_horizon(
     horizon: str,
 ) -> dict:
 
-    candidates = get_candidate_models()
     results = {}
+    cv = TimeSeriesSplit(n_splits=CV_FOLDS)
 
     logger.info("\n========================================")
     logger.info("        HORIZON: +%s", horizon)
     logger.info("========================================")
-
-    for name, model in candidates.items():
-        logger.info("\nTraining %s...", name)
-
-        # Train
-        model.fit(
-            X_train,
-            y_train,
+    logger.info(
+        "Train rows=%d (target std=%.2f) | Test rows=%d (target std=%.2f)",
+        len(y_train), float(y_train.std()), len(y_test), float(y_test.std()),
+    )
+    if y_test.std() < 10:
+        logger.warning(
+            "Test-set AQI barely varies (std=%.2f) for horizon %s - R2 will "
+            "look worse than the model's real skill even if RMSE/MAE are "
+            "fine, since R2 is measured relative to that variance.",
+            y_test.std(), horizon,
         )
 
-        # Predict
+    tuners = {
+        "ridge": _tune_ridge,
+        "random_forest": _tune_random_forest,
+        "xgboost": _tune_xgboost,
+    }
+
+    for name, tune_fn in tuners.items():
+        logger.info("\nTuning + training %s...", name)
+
+        model = tune_fn(X_train, y_train, cv)
         predictions = model.predict(X_test)
+        metrics = evaluate(y_test, predictions)
 
-        # Evaluate
-        metrics = evaluate(
-            y_test,
-            predictions,
-        )
-
-        results[name] = {
-            "model": model,
-            "metrics": metrics,
-        }
+        results[name] = {"model": model, "metrics": metrics}
 
         logger.info(
-            "%s: rmse=%.2f mae=%.2f r2=%.3f",
-            name,
-            metrics["rmse"],
-            metrics["mae"],
-            metrics["r2"],
+            "%s (tuned): rmse=%.2f mae=%.2f r2=%.3f",
+            name, metrics["rmse"], metrics["mae"], metrics["r2"],
         )
 
     return results
@@ -451,8 +575,18 @@ def run(
             raise RuntimeError(
                 f"Not enough historical rows to train. "
                 f"Found {len(df)} rows, minimum required is "
-                f"{min_rows}. Run `python -m src.backfill --days 366` "
+                f"{min_rows}. Run `python -m src.backfill --days 730` "
                 f"to backfill more history."
+            )
+
+        # ---- Drop stale-reading stretches before anything else ----
+        df = filter_stale_readings(df)
+
+        if len(df) < min_rows:
+            raise RuntimeError(
+                f"Only {len(df)} rows remain after dropping stale AQI "
+                f"stretches (minimum required is {min_rows}). The feature "
+                f"store may need a fresh backfill."
             )
 
         # ---- Build targets ----
@@ -510,7 +644,7 @@ def run(
                 )
 
             # ---------------------------------------
-            # Train 3 models
+            # Tune + train 3 models
             # ---------------------------------------
             candidates = train_horizon(
                 X_train,
@@ -524,6 +658,7 @@ def run(
             # Select best model
             # ---------------------------------------
             best_name, best_result = pick_best(candidates)
+            _check_quality_gate(horizon, best_result["metrics"])
 
             # ---------------------------------------
             # Register models
@@ -554,7 +689,7 @@ def run(
             status="success",
             records_processed=len(df),
             extra_logs=[
-                f"Trained {len(HORIZONS)} horizons x 3 algorithms",
+                f"Trained {len(HORIZONS)} horizons x 3 algorithms (each cross-validated)",
                 f"Best models: { {h: r['best_model'] for h, r in results.items()} }",
             ],
         )
