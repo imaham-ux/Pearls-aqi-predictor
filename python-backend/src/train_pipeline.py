@@ -280,8 +280,11 @@ def pick_best(results: dict):
     return best_name, results[best_name]
 
 
-def _register_models(horizon: str, candidates: dict, best_name: str, best_result: dict) -> None:
-    register_best_model(best_result["model"], f"aqi_model_{horizon}", best_result["metrics"], framework="sklearn")
+def _register_models(horizon: str, candidates: dict, best_name: str, best_result: dict, feature_cols: list) -> None:
+    register_best_model(
+        best_result["model"], f"aqi_model_{horizon}", best_result["metrics"],
+        framework="sklearn", feature_cols=feature_cols,
+    )
     logger.info("Registered only the best algorithm for %s: %s (RMSE=%.2f)", horizon, best_name, best_result["metrics"]["rmse"])
 
 
@@ -321,7 +324,7 @@ def run(min_rows: int = DEFAULT_MIN_ROWS, triggered_by: str = "manual") -> dict:
 
             candidates = train_horizon(X_train, y_train, X_test, y_test, horizon)
             best_name, best_result = pick_best(candidates)
-            _register_models(horizon, candidates, best_name, best_result)
+            _register_models(horizon, candidates, best_name, best_result, feature_cols)
 
             results[horizon] = {
                 "best_model": best_name,

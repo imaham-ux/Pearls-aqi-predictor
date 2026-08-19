@@ -150,20 +150,25 @@ def aqi_current():
 # ---------------------------------------------------------------------------
 def _ml_forecast_anchors():
     """Use our own trained RF/Ridge/LSTM models to predict 24h/48h/72h AQI."""
+    from src.model_registry import get_active_candidate
     from src.predict import predict_next_3_days
     result = predict_next_3_days()
 
-    mae_by_horizon = {}
+    metrics_by_horizon = {}
     report_path = config.MODELS_DIR / "training_report.json"
     if report_path.exists():
         report = json.loads(report_path.read_text())
         for h, r in report.items():
-            mae_by_horizon[h] = r["metrics"]["mae"]
+            best = r.get("best_model")
+            active = get_active_candidate(h, default=best)
+            all_candidates = r.get("all_candidates", {})
+            metrics = all_candidates.get(active) if active in all_candidates else r.get("metrics", {})
+            metrics_by_horizon[h] = metrics
 
     anchors = {"0h": result["current_aqi"]}
     for entry in result["forecast"]:
         anchors[entry["horizon"]] = entry["predicted_aqi"]
-    return anchors, mae_by_horizon, result["current_time"]
+    return anchors, metrics_by_horizon, result["current_time"]
 
 
 def _owm_forecast_anchors(lat, lon):
@@ -206,7 +211,7 @@ def aqi_forecast():
         now = datetime.now(timezone.utc)
 
         if trained:
-            anchors, mae_by_horizon, _ = _ml_forecast_anchors()
+            anchors, metrics_by_horizon, _ = _ml_forecast_anchors()
             day_bounds = [
                 (anchors.get("0h", 60), anchors.get("24h", 60), "24h"),
                 (anchors.get("24h", 60), anchors.get("48h", 60), "48h"),
@@ -225,7 +230,7 @@ def aqi_forecast():
                 (nearest_aqi(24), nearest_aqi(48), "48h"),
                 (nearest_aqi(48), nearest_aqi(72), "72h"),
             ]
-            mae_by_horizon = {}
+            metrics_by_horizon = {}
 
         for day_offset, (start_aqi, end_aqi, horizon) in enumerate(day_bounds, start=1):
             target_date = now + timedelta(days=day_offset)
@@ -237,7 +242,9 @@ def aqi_forecast():
                              else f"Day {day_offset} ({display_day})")
 
             hourly_curve = _build_hourly_curve(start_aqi, end_aqi, n_points=12)
-            mae = mae_by_horizon.get(horizon, 8.0)
+            horizon_metrics = metrics_by_horizon.get(horizon, {})
+            mae = horizon_metrics.get("mae", 8.0)
+            rmse = horizon_metrics.get("rmse")
 
             hourly = []
             for i, aqi_val in enumerate(hourly_curve):
@@ -266,6 +273,7 @@ def aqi_forecast():
                 "maxAQI": max(h["aqi"] for h in hourly),
                 "category": get_aqi_category(avg_aqi),
                 "primaryPollutant": "pm25",
+                "rmse": rmse,
                 "hourly": hourly,
             })
 

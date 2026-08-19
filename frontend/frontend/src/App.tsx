@@ -3,6 +3,7 @@ import { RefreshCw, AlertCircle } from 'lucide-react';
 import { Header } from './components/Header';
 import { AQIOverviewCard } from './components/AQIOverviewCard';
 import { ForecastSection } from './components/ForecastSection';
+import { HourlyTrend24h } from './components/HourlyTrend24h';
 import { HistoricalTrends } from './components/HistoricalTrends';
 import { HazardBanner } from './components/HazardBanner';
 import { FeatureStoreView } from './components/FeatureStoreView';
@@ -231,6 +232,8 @@ const App: React.FC = () => {
                 {forecast.length > 0 && (
                   <ForecastSection forecast={forecast} modelTrained={modelTrained} note={forecastNote} />
                 )}
+
+                <HourlyTrend24h />
 
                 <HistoricalTrends />
               </div>

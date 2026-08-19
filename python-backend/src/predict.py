@@ -10,6 +10,7 @@ import pandas as pd
 
 import config
 from src.feature_store import get_feature_store
+from src.model_registry import load_feature_cols
 from src.train_pipeline import get_available_features, build_targets
 
 logging.basicConfig(level=logging.INFO)
@@ -48,13 +49,12 @@ def get_latest_feature_row() -> pd.Series:
 
 def predict_next_3_days() -> dict:
     latest = get_latest_feature_row()
-    feature_cols = get_available_features(pd.DataFrame([latest]))
 
     forecasts = {}
     for horizon in HORIZONS:
         try:
             model_name = f"aqi_model_{horizon}"
-            model, framework, scaler = _load_named_model(model_name)
+            model, framework, scaler, feature_cols = _load_named_model(model_name)
 
             X = latest[feature_cols].values.reshape(1, -1).astype(float)
             X_in = scaler.transform(X) if scaler is not None else X
@@ -112,7 +112,14 @@ def _load_named_model(model_name):
         model = tf.keras.models.load_model(model_dir / "model.keras")
     else:
         model = joblib.load(model_dir / "model.joblib")
-    return model, framework, scaler
+
+    # Use the EXACT feature columns this model was trained on (persisted at
+    # training time). Fall back to get_available_features() only for models
+    # saved before feature-column persistence existed.
+    feature_cols = load_feature_cols(model_dir)
+    if feature_cols is None:
+        feature_cols = get_available_features(pd.DataFrame([get_latest_feature_row()]))
+    return model, framework, scaler, feature_cols
 
 
 if __name__ == "__main__":

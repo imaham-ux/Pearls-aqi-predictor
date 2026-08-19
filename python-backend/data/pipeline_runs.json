@@ -345,5 +345,124 @@
       "Best models: {'24h': 'xgboost', '48h': 'ridge', '72h': 'xgboost'}",
       "Finished with status=success in 292.69s"
     ]
+  },
+  {
+    "id": "run-393781a1",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "success",
+    "startTime": "2026-08-18T10:36:58.419411+00:00",
+    "durationSeconds": 1551.97,
+    "recordsProcessed": 10177,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)",
+      "Trained 3 horizons x 3 algorithms (each cross-validated)",
+      "Best models: {'24h': 'random_forest', '48h': 'ridge', '72h': 'random_forest'}",
+      "Finished with status=success in 1551.97s"
+    ]
+  },
+  {
+    "id": "run-69ee9331",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "failed",
+    "startTime": "2026-08-18T11:30:59.160387+00:00",
+    "durationSeconds": 1283.73,
+    "recordsProcessed": 0,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)",
+      "Error: Feature store is empty. Run the backfill pipeline (`python -m src.backfill --days 730`) or the hourly feature pipeline at least once before training.",
+      "Finished with status=failed in 1283.73s"
+    ]
+  },
+  {
+    "id": "run-93efc156",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "running",
+    "startTime": "2026-08-18T11:55:02.471383+00:00",
+    "_start_perf": 20528.1749792,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)"
+    ]
+  },
+  {
+    "id": "run-3a41af66",
+    "name": "Hourly Weather & Pollutant Ingestion",
+    "type": "feature_ingestion",
+    "status": "failed",
+    "startTime": "2026-08-18T16:57:32.643233+00:00",
+    "durationSeconds": 307.53,
+    "recordsProcessed": 0,
+    "triggeredBy": "scheduler",
+    "logs": [
+      "Started: Hourly Weather & Pollutant Ingestion",
+      "Error: Delta Lake (deltalake) and its dependencies are required for non-Spark operations. Install 'hops-deltalake' to enable Delta RS features.",
+      "Finished with status=failed in 307.53s"
+    ]
+  },
+  {
+    "id": "run-d549a437",
+    "name": "Hourly Weather & Pollutant Ingestion",
+    "type": "feature_ingestion",
+    "status": "running",
+    "startTime": "2026-08-18T18:11:27.849218+00:00",
+    "_start_perf": 43113.5653486,
+    "durationSeconds": 0,
+    "recordsProcessed": 0,
+    "triggeredBy": "scheduler",
+    "logs": [
+      "Started: Hourly Weather & Pollutant Ingestion"
+    ]
+  },
+  {
+    "id": "run-3353b0ae",
+    "name": "Hourly Weather & Pollutant Ingestion",
+    "type": "feature_ingestion",
+    "status": "failed",
+    "startTime": "2026-08-18T18:30:07.976856+00:00",
+    "durationSeconds": 324.03,
+    "recordsProcessed": 0,
+    "triggeredBy": "scheduler",
+    "logs": [
+      "Started: Hourly Weather & Pollutant Ingestion",
+      "Error: Kernel error -> Generic HdfsObjectStore error\n          \u001b[31m\u21b3\u001b[0m IO error occurred while communicating with HDFS\n           \u001b[31m\u21b3\u001b[0m RPC listener disconnected\n",
+      "Finished with status=failed in 324.03s"
+    ]
+  },
+  {
+    "id": "run-e4b6144f",
+    "name": "Hourly Weather & Pollutant Ingestion",
+    "type": "feature_ingestion",
+    "status": "failed",
+    "startTime": "2026-08-18T19:29:24.312305+00:00",
+    "durationSeconds": 193.19,
+    "recordsProcessed": 0,
+    "triggeredBy": "scheduler",
+    "logs": [
+      "Started: Hourly Weather & Pollutant Ingestion",
+      "Error: Could not read data using Hopsworks Query Service.",
+      "Finished with status=failed in 193.19s"
+    ]
+  },
+  {
+    "id": "run-b8ba4b86",
+    "name": "AQI Training Pipeline (Karachi)",
+    "type": "model_training",
+    "status": "failed",
+    "startTime": "2026-08-18T19:51:52.986093+00:00",
+    "durationSeconds": 193.93,
+    "recordsProcessed": 0,
+    "triggeredBy": "manual",
+    "logs": [
+      "Started: AQI Training Pipeline (Karachi)",
+      "Error: Could not read data using Hopsworks Query Service.",
+      "Finished with status=failed in 193.93s"
+    ]
   }
 ]

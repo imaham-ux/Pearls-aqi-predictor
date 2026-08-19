@@ -50,6 +50,7 @@ export interface ForecastDaySummary {
   maxAQI: number;
   category: string;
   primaryPollutant: string;
+  rmse?: number | null;
   hourly: HourlyForecastPoint[];
 }
 

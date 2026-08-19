@@ -20,10 +20,42 @@ All network calls below are wrapped with retry + exponential backoff so a
 transient blip doesn't fail the whole pipeline run. Inserts get extra-patient
 retries (longer waits, more attempts) since storage-layer settling after a
 bulk backfill can take a couple of minutes to clear.
+
+IMPORTANT - connection is a process-wide singleton (see get_feature_store()
+at the bottom): the Hopsworks Python client keeps some connection state in
+shared/global objects internally, and is NOT safe to log in to concurrently
+from multiple threads. Flask's dev server handles requests on multiple
+threads at once, and every dashboard page load fires off several API calls
+in parallel (current AQI, forecast, feature-store, SHAP, model registry).
+If get_feature_store() created a brand new HopsworksFeatureStore() - and
+therefore called hopsworks.login() - on every single call, those concurrent
+logins raced each other and corrupted the shared client state, surfacing as
+unrelated-looking errors such as "Couldn't find client", certificate paths
+suddenly being None, or the read path silently falling back to the
+unsupported legacy Hive reader. Logging in exactly once per process and
+reusing that connection for every request avoids all of this.
+
+IMPORTANT #2 - reads are also single-flighted (see HopsworksFeatureStore._read_lock):
+the login singleton above stops concurrent *logins*, but it does NOT stop
+concurrent *reads*. When several dashboard panels load at once (current AQI,
+forecast, feature-store, SHAP, model registry), each one used to call
+.read() independently, and if the 5-minute cache was empty/expired at that
+moment, EVERY one of those threads fired its own Arrow Flight query at the
+same time against the same (free-tier) Hopsworks project. That self-inflicted
+concurrency is itself a plausible contributor to the "End of TCP stream" /
+FlightUnavailableError bursts we saw in production logs - N simultaneous
+Flight queries hitting a service that's already known to be flaky under
+normal single-query load. Serializing reads behind a lock means only one
+thread ever does the real Hopsworks call; everyone else either blocks and
+then reuses the result the first thread just fetched, or (if already cached
+by the time they get the lock) returns instantly without touching the
+network at all.
 """
+import threading
 import time
 import logging
 import pandas as pd
+import os
 
 import config
 
@@ -31,6 +63,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("feature_store")
 
 LOCAL_PARQUET_PATH = config.DATA_DIR / "aqi_features.parquet"
+# Snapshot of the most recent successful Hopsworks read. Hopsworks' Arrow
+# Flight "Feature Query Service" is flaky from this network (see module
+# docstring), so when a read fails we serve the last known-good dataset we
+# already pulled from Hopsworks instead of hard-failing the whole pipeline.
+# This is still REAL Hopsworks data - just cached locally for resilience.
+LOCAL_SNAPSHOT_PATH = config.DATA_DIR / "hopsworks_snapshot.parquet"
 
 
 def _with_retries(func, *args, retries=4, base_delay=5, label="Hopsworks call", **kwargs):
@@ -156,6 +194,25 @@ class HopsworksFeatureStore:
 
     backend_name = "Hopsworks"
 
+    # Cache the last successful read so repeated API calls don't hammer the
+    # (slow) Hopsworks Query Service. The data only changes on the hourly
+    # feature-pipeline cadence, so a cache TTL of 5 minutes is safe.
+    _cached_df = None
+    _cache_time = None
+    CACHE_TTL_SECONDS = 300
+
+    # Single-flight lock for reads. The login singleton (see module docstring
+    # and get_feature_store() below) stops concurrent hopsworks.login() calls,
+    # but does NOT stop concurrent .read() calls. Several dashboard panels
+    # loading at once can all hit an empty/expired cache simultaneously and
+    # each fire an independent Arrow Flight query at the same free-tier
+    # Hopsworks project - that self-inflicted concurrency is itself a likely
+    # contributor to FlightUnavailableError ("End of TCP stream") bursts.
+    # This lock ensures only ONE thread ever performs the real Hopsworks
+    # read at a time; everyone else either blocks and reuses that result, or
+    # finds the cache already warm by the time they acquire the lock.
+    _read_lock = threading.Lock()
+
     def __init__(self):
         import hopsworks  # imported lazily so local mode never requires the package to succeed at import time
 
@@ -165,6 +222,8 @@ class HopsworksFeatureStore:
             api_key_value=config.HOPSWORKS_API_KEY,
             project=config.HOPSWORKS_PROJECT_NAME,
             label="Hopsworks login",
+            cert_folder=os.path.join(os.getcwd(), "hopsworks_certs"),
+
         )
         self.fs = self.project.get_feature_store()
 
@@ -222,6 +281,26 @@ class HopsworksFeatureStore:
         # small head start rather than immediately hammering it with a big insert.
         time.sleep(5)
 
+        # Pre-warm the read cache right after connecting. Without this, the
+        # very first dashboard load after a process (re)start is exactly the
+        # moment several panels fire in parallel with nothing cached yet -
+        # the worst possible time for a thundering-herd of concurrent Arrow
+        # Flight queries. Doing one read now, while we're the only thread
+        # touching this instance, means every one of those first-page-load
+        # requests finds a warm cache and never talks to Hopsworks directly.
+        # Best-effort only: if Hopsworks is having a bad moment right at
+        # startup, we don't want to fail the whole app for a cache warm-up -
+        # the normal read() path (with its own retries + snapshot fallback)
+        # will simply try again on first real use.
+        try:
+            self.read()
+            logger.info("Pre-warmed feature-store read cache at startup.")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Could not pre-warm feature-store read cache at startup (%s). "
+                "Will retry on first real request.", e,
+            )
+
     def insert(self, df: pd.DataFrame):
         # IMPORTANT: do NOT silently fall back to local storage here. If Hopsworks
         # is configured, this data MUST land in the real feature group - falling
@@ -264,36 +343,137 @@ class HopsworksFeatureStore:
                 label=f"insert {len(df)} rows into '{config.FEATURE_GROUP_NAME}'",
             )
             logger.info("Inserted %d rows -> Hopsworks feature group '%s'", len(df), config.FEATURE_GROUP_NAME)
+
+        # Invalidate the read cache: what we just wrote should be visible on
+        # the very next read instead of serving stale cached rows for up to
+        # CACHE_TTL_SECONDS.
+        HopsworksFeatureStore._cached_df = None
+        HopsworksFeatureStore._cache_time = None
         return df
 
     def read(self) -> pd.DataFrame:
-        # Extra patience here too: the DAILY TRAINING pipeline depends entirely
-        # on this read succeeding (it needs the full historical dataset), so
-        # it's worth waiting several minutes for a transient Hopsworks storage
-        # blip to clear rather than failing the whole day's training run.
-        try:
-            return _with_retries(
-                self.fg.read, retries=6, base_delay=20,  # 20s,40s,60s,80s,100s (~5 min total)
-                label=f"read '{config.FEATURE_GROUP_NAME}'",
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "Could not read feature group '%s' after extended retries - this was a REAL "
-                "read failure (likely a Hopsworks storage/Arrow-Flight issue), not just an "
-                "empty feature group. Downstream code may misreport this as 'not enough data'; "
-                "check this log line if that happens. Original error: %s",
-                config.FEATURE_GROUP_NAME, e,
-            )
-            return pd.DataFrame()
+        # Fast path: cache already warm, no lock needed. This is the common
+        # case for every request after the first within a given TTL window.
+        if HopsworksFeatureStore._cached_df is not None and HopsworksFeatureStore._cache_time is not None:
+            age = time.time() - HopsworksFeatureStore._cache_time
+            if age < HopsworksFeatureStore.CACHE_TTL_SECONDS:
+                logger.info("Serving cached feature-store read (%.0fs old, TTL=%ds).", age, HopsworksFeatureStore.CACHE_TTL_SECONDS)
+                return HopsworksFeatureStore._cached_df.copy()
+
+        # Slow path: cache is empty or expired. Single-flight this behind a
+        # lock so that if several requests hit this branch at the same time
+        # (e.g. multiple dashboard panels loading together right after the
+        # cache expires), only ONE of them actually talks to Hopsworks. The
+        # rest block here and then just reuse whatever that thread fetched -
+        # they do NOT each fire their own concurrent Arrow Flight query.
+        with HopsworksFeatureStore._read_lock:
+            # Re-check inside the lock: another thread may have already
+            # refreshed the cache while we were waiting our turn.
+            if HopsworksFeatureStore._cached_df is not None and HopsworksFeatureStore._cache_time is not None:
+                age = time.time() - HopsworksFeatureStore._cache_time
+                if age < HopsworksFeatureStore.CACHE_TTL_SECONDS:
+                    logger.info(
+                        "Serving cached feature-store read (%.0fs old, refreshed by another "
+                        "thread while we were waiting on the read lock).", age,
+                    )
+                    return HopsworksFeatureStore._cached_df.copy()
+
+            # Normal read path (may use Arrow Flight). A few retries with short
+            # backoff handle transient Arrow-Flight blips, but we cap it so a dead
+            # connection fails fast instead of hanging for 10+ minutes.
+            try:
+                df = _with_retries(
+                    self.fg.read, retries=3, base_delay=5,
+                    label=f"read '{config.FEATURE_GROUP_NAME}'",
+                )
+                HopsworksFeatureStore._cached_df = df
+                HopsworksFeatureStore._cache_time = time.time()
+                # Persist the latest known-good snapshot so we can keep serving real
+                # Hopsworks data even if the next read hits a flaky Arrow-Flight
+                # connection (see LOCAL_SNAPSHOT_PATH).
+                try:
+                    df.to_parquet(LOCAL_SNAPSHOT_PATH, index=False)
+                except Exception as snap_err:  # noqa: BLE001
+                    logger.warning("Could not persist Hopsworks snapshot locally (%s).", snap_err)
+                return df
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "Could not read feature group '%s' - this was a REAL read failure (likely a "
+                    "Hopsworks storage/Arrow-Flight issue), not just an empty feature group. "
+                    "Original error: %s",
+                    config.FEATURE_GROUP_NAME, e,
+                )
+                # Serve the last known-good snapshot (still REAL Hopsworks data we
+                # pulled earlier) so the pipeline/API keeps working through a
+                # transient Hopsworks outage instead of hard-failing.
+                if LOCAL_SNAPSHOT_PATH.exists():
+                    logger.warning(
+                        "Falling back to local Hopsworks snapshot at %s (%.0f rows).",
+                        LOCAL_SNAPSHOT_PATH,
+                        len(pd.read_parquet(LOCAL_SNAPSHOT_PATH)),
+                    )
+                    df = pd.read_parquet(LOCAL_SNAPSHOT_PATH)
+                    HopsworksFeatureStore._cached_df = df
+                    HopsworksFeatureStore._cache_time = time.time()
+                    return df
+                raise
+
+
+# ============================================================
+# PROCESS-WIDE SINGLETON
+#
+# get_feature_store() used to construct a brand new HopsworksFeatureStore()
+# - and therefore call hopsworks.login() - on every single call. Under
+# Flask's multi-threaded dev server, several dashboard tabs loading at once
+# meant several concurrent logins, which corrupted the Hopsworks client's
+# shared internal state (see the long comment at the top of this file).
+#
+# Now we log in exactly once per process (guarded by a lock so two threads
+# racing to create the first instance can't collide) and hand out that same
+# instance to everyone. This is safe because HopsworksFeatureStore itself
+# has no per-call mutable state other than the class-level read cache (now
+# also single-flighted via _read_lock), which was already designed to be
+# shared.
+# ============================================================
+_singleton_lock = threading.Lock()
+_singleton_store = None
 
 
 def get_feature_store():
-    """Factory: returns Hopsworks store if configured, else local parquet store."""
-    if config.USE_HOPSWORKS:
-        try:
-            return HopsworksFeatureStore()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Hopsworks connection failed (%s). Falling back to local feature store.", e)
-            return LocalFeatureStore()
-    logger.info("HOPSWORKS_API_KEY not set -> using local parquet feature store at %s", LOCAL_PARQUET_PATH)
-    return LocalFeatureStore()
+    """Factory: returns a shared Hopsworks store instance if configured,
+    else a shared local parquet store instance. Safe to call from multiple
+    threads/requests - the underlying connection is only ever created once."""
+    global _singleton_store
+
+    if _singleton_store is not None:
+        return _singleton_store
+
+    with _singleton_lock:
+        # Another thread may have finished building the singleton while we
+        # were waiting for the lock - check again before doing any work.
+        if _singleton_store is not None:
+            return _singleton_store
+
+        if config.USE_HOPSWORKS:
+            try:
+                _singleton_store = HopsworksFeatureStore()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Hopsworks connection failed (%s). Falling back to local feature store.", e)
+                _singleton_store = LocalFeatureStore()
+        else:
+            logger.info("HOPSWORKS_API_KEY not set -> using local parquet feature store at %s", LOCAL_PARQUET_PATH)
+            _singleton_store = LocalFeatureStore()
+
+        return _singleton_store
+
+
+def reset_feature_store_singleton():
+    """Force the next get_feature_store() call to create a fresh connection.
+    Not needed in normal operation, but handy if a long-lived Hopsworks
+    session ever needs to be manually recycled (e.g. after a very long
+    Flask uptime, or while debugging a connection issue)."""
+    global _singleton_store
+    with _singleton_lock:
+        _singleton_store = None
+        HopsworksFeatureStore._cached_df = None
+        HopsworksFeatureStore._cache_time = None

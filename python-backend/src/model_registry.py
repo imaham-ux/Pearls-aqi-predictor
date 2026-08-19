@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("model_registry")
 
 
-def save_model_local(model, name: str, metrics: dict, framework: str = "sklearn"):
+def save_model_local(model, name: str, metrics: dict, framework: str = "sklearn", feature_cols: list = None):
     model_dir = config.MODELS_DIR / name
     model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -27,8 +27,27 @@ def save_model_local(model, name: str, metrics: dict, framework: str = "sklearn"
     with open(model_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
+    # Persist the EXACT feature columns this model was trained on. predict.py
+    # and shap_explain.py load this list so they always feed the model the same
+    # columns it saw during training - even if the feature store later gains
+    # new columns (which previously caused "X has 36 features, but
+    # StandardScaler is expecting 24 features as input").
+    if feature_cols is not None:
+        with open(model_dir / "features.json", "w") as f:
+            json.dump(list(feature_cols), f, indent=2)
+
     logger.info("Saved model '%s' (%s) locally -> %s | metrics=%s", name, framework, model_dir, metrics)
     return model_dir
+
+
+def load_feature_cols(model_dir) -> list:
+    """Return the exact feature columns a saved model was trained on, or None
+    if the model predates feature-column persistence (callers should fall back
+    to get_available_features() in that case)."""
+    features_path = Path(model_dir) / "features.json"
+    if features_path.exists():
+        return json.loads(features_path.read_text())
+    return None
 
 
 def push_to_hopsworks_registry(local_model_dir: Path, name: str, metrics: dict, framework: str = "sklearn"):
@@ -47,8 +66,8 @@ def push_to_hopsworks_registry(local_model_dir: Path, name: str, metrics: dict, 
     return py_model
 
 
-def register_best_model(model, name: str, metrics: dict, framework: str = "sklearn"):
-    local_dir = save_model_local(model, name, metrics, framework)
+def register_best_model(model, name: str, metrics: dict, framework: str = "sklearn", feature_cols: list = None):
+    local_dir = save_model_local(model, name, metrics, framework, feature_cols=feature_cols)
     if config.USE_HOPSWORKS:
         try:
             push_to_hopsworks_registry(local_dir, name, metrics, framework)

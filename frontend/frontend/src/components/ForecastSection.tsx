@@ -77,6 +77,11 @@ export const ForecastSection: React.FC<Props> = ({ forecast, modelTrained, note 
               <div className="text-[10px] text-slate-500 mt-1">
                 {Math.round(d.minAQI)}–{Math.round(d.maxAQI)} range
               </div>
+              {modelTrained && typeof d.rmse === 'number' && (
+                <div className="text-[10px] text-slate-400 mt-1 font-semibold" title="Model RMSE (root mean squared error on holdout set)">
+                  RMSE {d.rmse.toFixed(1)}
+                </div>
+              )}
             </button>
           );
         })}
