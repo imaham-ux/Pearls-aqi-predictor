@@ -383,7 +383,7 @@ class HopsworksFeatureStore:
             # connection fails fast instead of hanging for 10+ minutes.
             try:
                 df = _with_retries(
-                    self.fg.read, retries=3, base_delay=5,
+                    self.fg.read, retries=6, base_delay=15,
                     label=f"read '{config.FEATURE_GROUP_NAME}'",
                 )
                 HopsworksFeatureStore._cached_df = df
