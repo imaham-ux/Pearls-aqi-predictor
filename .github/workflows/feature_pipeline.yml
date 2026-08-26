@@ -1,10 +1,8 @@
 name: Hourly Feature Pipeline
-
 on:
   schedule:
     - cron: "0 * * * *"   # every hour, on the hour
   workflow_dispatch: {}     # allow manual trigger from the Actions tab
-
 jobs:
   run-feature-pipeline:
     runs-on: ubuntu-latest
@@ -14,16 +12,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
+      - name: Restore Hopsworks snapshot cache
+        uses: actions/cache@v4
+        with:
+          path: python-backend/data/hopsworks_snapshot.parquet
+          key: hopsworks-snapshot-${{ github.run_id }}
+          restore-keys: |
+            hopsworks-snapshot-
       - name: Run hourly feature pipeline
         env:
           AQICN_TOKEN: ${{ secrets.AQICN_TOKEN }}
@@ -34,5 +36,3 @@ jobs:
           HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
           HOPSWORKS_PROJECT_NAME: ${{ vars.HOPSWORKS_PROJECT_NAME }}
         run: python -m src.feature_pipeline
-
-     
