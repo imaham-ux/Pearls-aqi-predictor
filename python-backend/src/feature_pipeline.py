@@ -16,6 +16,16 @@ Feature Pipeline (runs every hour via GitHub Actions / Airflow).
 2. Compute time + derived features using recent history pulled from the
    feature store (for lags/rolling stats)
 3. Insert the new row into the Feature Store
+
+NOTE ON FAILURE HANDLING: a read from the feature store (step 2's history
+pull) can fail if the Hopsworks Arrow Flight Query Service is having an
+outage and there's no local snapshot to fall back on (see feature_store.py
+docstring). That's an upstream infra issue, not a bug in this pipeline, so
+we treat it as "skip this hour" - log it, mark the run as skipped, and exit
+cleanly - rather than failing the whole CI job. The next scheduled run an
+hour later will simply try again. An INSERT failure, by contrast, still
+raises loudly: silently treating a failed write as success would leave the
+feature group missing data with no visible error.
 """
 import logging
 import pandas as pd
@@ -31,6 +41,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("feature_pipeline")
 
 STALENESS_LOOKBACK_HOURS = 3
+
+
+class FeaturePipelineSkipped(Exception):
+    """Raised internally when this hourly run cannot proceed - e.g. the
+    Hopsworks Query Service read failed and there was no local snapshot to
+    fall back on (see feature_store.py). This is NOT a code bug - it's an
+    upstream Hopsworks outage - so we treat it as "skip this hour" rather
+    than failing the whole CI job. The next scheduled run an hour later
+    will just try again."""
+    pass
 
 
 def _is_aqicn_stale(history: pd.DataFrame, aqicn_value: float, lookback: int = STALENESS_LOOKBACK_HOURS) -> bool:
@@ -133,7 +153,26 @@ def run(triggered_by: str = "scheduler"):
     try:
         store = get_feature_store()
 
-        history = store.read()
+        # Read the feature-store history. If Hopsworks' Query Service is down
+        # AND there's no local snapshot to fall back on, store.read() raises.
+        # That's an upstream outage, not a bug here - skip this hour cleanly
+        # instead of failing the whole CI job (see FeaturePipelineSkipped doc).
+        try:
+            history = store.read()
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "Skipping this hourly run: could not read feature-store history "
+                "(likely a Hopsworks outage, see error below) and no local "
+                "snapshot was available to fall back on. Next scheduled run "
+                "will retry automatically. Original error: %s", e,
+            )
+            log_run_end(
+                run_record,
+                status="skipped",
+                extra_logs=[f"Skipped: feature-store read failed with no fallback available: {e}"],
+            )
+            raise FeaturePipelineSkipped(str(e)) from e
+
         new_row = fetch_current_raw_row(history)
         new_df = pd.DataFrame([new_row])
 
@@ -161,16 +200,38 @@ def run(triggered_by: str = "scheduler"):
                 )
             latest_row = latest_row[existing_cols]
 
+        # Insert failures are NOT swallowed - unlike a read failure (where we
+        # can safely skip an hour and catch up next time), a failed insert
+        # means this hour's data never made it into the feature group. We
+        # want that loud and visible rather than silently "succeeding".
         store.insert(latest_row)
         logger.info("Feature pipeline run complete. Latest AQI=%s at %s",
                     new_row["aqi"], new_row["datetime"])
         log_run_end(run_record, status="success", records_processed=1,
                     extra_logs=[f"Fetched live reading: AQI={new_row['aqi']} at {new_row['datetime']}"])
         return latest_row
+    except FeaturePipelineSkipped:
+        # Already logged + recorded above - just propagate so __main__ can
+        # exit(0) instead of exit(1), distinguishing "skipped, try later"
+        # from "actually failed".
+        raise
     except Exception as e:  # noqa: BLE001
         log_run_end(run_record, status="failed", extra_logs=[f"Error: {e}"])
         raise
 
 
 if __name__ == "__main__":
-    run()
+    import sys
+
+    try:
+        run()
+    except FeaturePipelineSkipped as e:
+        # Upstream Hopsworks outage with no fallback available - this hour
+        # is skipped, but it's not a pipeline bug, so exit 0 (green build)
+        # rather than failing the CI job / sending a failure alert.
+        logger.warning("Hourly run skipped (not a failure): %s", e)
+        sys.exit(0)
+    except Exception:
+        # A genuine failure (bad data, insert failure, unexpected bug, etc.)
+        # - exit non-zero so CI marks the job failed and you get an alert.
+        sys.exit(1)
