@@ -19,7 +19,7 @@ feature engineering, model training, and a live dashboard, end to end.
                     ▼                        ▼                        ▼
             AQICN / OpenWeather /     Hopsworks Feature       Trained models
             Open-Meteo APIs           Store (or local          (RandomForest,
-            (live + historical         parquet fallback)        Ridge, LSTM)
+            (live + historical         parquet fallback)        Ridge, XGboost)
             pollutant + weather                                 + SHAP
             data)
 ```
@@ -42,7 +42,7 @@ simply calls the Flask API over HTTP whenever it's running.
 | Requirement | Used |
 |---|---|
 | Language | Python (backend), TypeScript (frontend) |
-| ML models | scikit-learn (Random Forest, Ridge Regression), TensorFlow (LSTM) |
+| ML models | scikit-learn (Random Forest, Ridge Regression), XGboost |
 | Feature Store | Hopsworks (with a local-parquet fallback when no credentials are set) |
 | Automation | GitHub Actions (hourly feature ingestion, daily retraining, manual backfill) |
 | Web API | Flask |
