@@ -58,11 +58,20 @@ simply calls the Flask API over HTTP whenever it's running.
 1. **Home Dashboard** — live AQI, category, last-updated time
 2. **3-Day Forecast** — day cards, chart and table views, hourly breakdown
 3. **Weather Information** — temperature, humidity, wind speed, pressure
-4. **Historical AQI Trends** — interactive chart, filterable by 7 / 30 / 90 days
-5. **Alerts** — color-coded AQI status, inline hazard warning banners, alert drawer
-6. **Model Explanation** — real SHAP feature-importance breakdown per forecast day
-7. **Model Performance** — RMSE / MAE / R² per model, last-trained date
-8. **Extras** — hourly auto-refresh, CSV export of the 3-day forecast, responsive layout
+4. **24-Hour Trend Line Graph** — a dedicated, always-visible line chart on
+   the home dashboard plotting AQI over the most recent 24 hours (pulled
+   from `GET /api/aqi/history?days=1`, sampled hourly). Distinct from the
+   longer-range Historical AQI Trends chart below, this view is meant for
+   an at-a-glance read of short-term movement — is AQI currently trending
+   up, down, or flat over the last day — rather than for exploring
+   week/month-scale patterns. Hovering a point on the line shows the exact
+   AQI value and timestamp for that hour; the graph auto-refreshes on the
+   same hourly cadence as the rest of the dashboard.
+5. **Historical AQI Trends** — interactive chart, filterable by 7 / 30 / 90 days
+6. **Alerts** — color-coded AQI status, inline hazard warning banners, alert drawer
+7. **Model Explanation** — real SHAP feature-importance breakdown per forecast day
+8. **Model Performance** — RMSE / MAE / R² per model, last-trained date
+9. **Extras** — hourly auto-refresh, CSV export of the 3-day forecast, responsive layout
 
 ### Live-reading data quality
 
@@ -74,6 +83,10 @@ are addressed by making **Open-Meteo the primary source** for both live
 readings and historical backfill (it has real values for all six pollutants
 and updates hourly), with AQICN kept only as a secondary cross-check/fallback
 and a staleness check that flags repeated identical readings.
+
+This same staleness-aware, Open-Meteo-first data flow feeds the new 24-hour
+trend line graph, so short-term movement shown on the home dashboard reflects
+real hourly variation rather than a ground station repeating its last reading.
 
 ---
 
@@ -134,8 +147,17 @@ in between.
 
 `python-backend/.github/workflows/` contains three GitHub Actions workflows:
 
-- **Hourly Feature Pipeline** — runs every hour, ingests one live reading
-- **Daily Training Pipeline** — runs once a day, retrains all models
+- **Hourly Feature Pipeline** — runs every hour, ingests one live reading.
+  Resilient to transient Hopsworks Query Service outages: a local snapshot
+  of the last successful read is cached across runs (via `actions/cache`)
+  and served as a fallback if a read fails; if no snapshot is available
+  either, the run is logged as "skipped" and exits cleanly rather than
+  failing the CI job.
+- **Daily Training Pipeline** — runs once a day, retrains all models. Also
+  benefits from the same cached snapshot fallback on a Hopsworks read
+  failure, but unlike the hourly job, an unrecoverable read failure here
+  is intentionally left to fail loudly (CI job marked failed) so that a
+  missed daily retrain is never silently absorbed.
 - **Manual Backfill** — triggered on demand from the Actions tab, rebuilds
   the historical training dataset
 
@@ -171,8 +193,9 @@ schedule without any local machine needing to be on.
         ├── App.tsx                    # top-level state + data orchestration
         ├── api.ts                      # all backend calls, centralized
         ├── types.ts                     # types matching the Flask JSON responses
-        └── components/                   # Header, forecast, feature store, model
-                                            # registry, SHAP, alerts, historical trends
+        └── components/                   # Header, forecast, 24h trend graph,
+                                            # feature store, model registry, SHAP,
+                                            # alerts, historical trends
 ```
 
 ---
@@ -235,6 +258,25 @@ custom-trained model.
   ],
   "modelTrained": true,
   "note": null
+}
+```
+
+### 24-hour trend
+
+**`GET /api/aqi/history?days=1`**
+
+Powers the new 24-Hour Trend Line Graph on the home dashboard. Same shape as
+the general Historical Trends endpoint below, but scoped to `days=1` so the
+frontend gets exactly the last 24 hourly points to plot.
+
+```json
+{
+  "days": 1,
+  "points": [
+    { "timestamp": "2026-08-08T13:00:00+00:00", "aqi": 90.0, "pm25": 41.2, "pm10": 57.1 },
+    { "timestamp": "2026-08-08T14:00:00+00:00", "aqi": 91.5, "pm25": 41.8, "pm10": 57.9 }
+  ],
+  "count": 24
 }
 ```
 
